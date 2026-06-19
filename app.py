@@ -620,21 +620,21 @@ if sc_key == "1":
     recovery_time = "12 min"
     affected_aircraft = 1
     capacity_loss = 10
-    severity = "E: NO SAFETY EFFECT - ADVISORY"
+    severity = "E NO SAFETY EFFECT - ADVISORY"
     sev_color = "orange"
 elif sc_key == "2":
     detection_time = "45 sec"
     recovery_time = "15 min"
     affected_aircraft = 1
     capacity_loss = 15
-    severity = "C: SIGNIFICANT INCIDENT - CRITICAL"
+    severity = "C SIGNIFICANT INCIDENT - CRITICAL"
     sev_color = "red"
 else:
     detection_time = "1 min"
     recovery_time = "30 min"
     affected_aircraft = 3
     capacity_loss = 40
-    severity = "B: MAJOR INCIDENT - EMERGENCY"
+    severity = "B MAJOR INCIDENT - EMERGENCY"
     sev_color = "darkred"
 
 st.subheader("GNSS Resilience KPI Dashboard")
