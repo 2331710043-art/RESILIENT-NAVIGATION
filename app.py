@@ -241,8 +241,8 @@ elif "Kịch bản 2" in scenario:
 
     # Resilient Navigation: FDE (Fault Detection & Exclusion) — rolling average
     # Làm mượt để loại bỏ các điểm nhảy (giả lập thuật toán lọc máy tính onboard)
-    r_lat1 = pd.Series(g_lat1).rolling(window=10, center=True, min_periods=1).mean().values
-    r_lon1 = pd.Series(g_lon1).rolling(window=10, center=True, min_periods=1).mean().values
+    r_lat1 = pd.Series(g_lat1).rolling(window=10, center=True, min_periods=1).mean().values.copy()
+    r_lon1 = pd.Series(g_lon1).rolling(window=10, center=True, min_periods=1).mean().values.copy()
     # Ép các điểm từ 0 đến 35 (trước khi gặp nhiễu) bằng chuẩn tọa độ thực tế
     r_lat1[:35] = t_lat1[:35]
     r_lon1[:35] = t_lon1[:35]
@@ -294,12 +294,12 @@ else:
     g_lat3, g_lon3 = inject_spoof(t_lat3), inject_spoof(t_lon3)
 
     # Resilient Navigation: Bộ lọc hồi phục tọa độ cho cả 3 luồng bay
-    r_lat1 = pd.Series(g_lat1).rolling(window=15, center=True, min_periods=1).mean().values
-    r_lon1 = pd.Series(g_lon1).rolling(window=15, center=True, min_periods=1).mean().values
-    r_lat2 = pd.Series(g_lat2).rolling(window=15, center=True, min_periods=1).mean().values
-    r_lon2 = pd.Series(g_lon2).rolling(window=15, center=True, min_periods=1).mean().values
-    r_lat3 = pd.Series(g_lat3).rolling(window=15, center=True, min_periods=1).mean().values
-    r_lon3 = pd.Series(g_lon3).rolling(window=15, center=True, min_periods=1).mean().values
+    r_lat1 = pd.Series(g_lat1).rolling(window=15, center=True, min_periods=1).mean().values.copy()
+    r_lon1 = pd.Series(g_lon1).rolling(window=15, center=True, min_periods=1).mean().values.copy()
+    r_lat2 = pd.Series(g_lat2).rolling(window=15, center=True, min_periods=1).mean().values.copy()
+    r_lon2 = pd.Series(g_lon2).rolling(window=15, center=True, min_periods=1).mean().values.copy()
+    r_lat3 = pd.Series(g_lat3).rolling(window=15, center=True, min_periods=1).mean().values.copy()
+    r_lon3 = pd.Series(g_lon3).rolling(window=15, center=True, min_periods=1).mean().values.copy()
   
     # 2. SỬA LỖI BIÊN TẠI 0 PHÚT cho cả 3 luồng (Đặt ở đây)
     r_lat1[:35] = t_lat1[:35]
