@@ -141,10 +141,10 @@ np.random.seed(42)
 # =====================================================
 # ĐỊNH NGHĨA DỮ LIỆU ĐƯỜNG BAY GỐC (BASE TRAJECTORIES)
 # =====================================================
-TSN_LAT, TSN_LON = 10.818, 106.652
+SGN_LAT, SGN_LON = 10.818, 106.652
 SIN_LAT, SIN_LON = 1.364, 103.991
-t_lat1 = np.linspace(TSN_LAT, SIN_LAT, n_points)
-t_lon1 = np.linspace(TSN_LON, SIN_LON, n_points)
+t_lat1 = np.linspace(SGN_LAT, SIN_LAT, n_points)
+t_lon1 = np.linspace(SGN_LON, SIN_LON, n_points)
 
 PNH_LAT, PNH_LON = 11.546, 104.844
 KUL_LAT, KUL_LON = 2.745, 101.709
@@ -375,7 +375,7 @@ else:
     fig_map.add_trace(go.Scattermapbox(
         lat=t_lat1[:2], lon=t_lon1[:2], mode='lines',
         line=dict(color='green', width=2),
-        name='Radar FL1 (TSN→SIN)'))
+        name='Radar FL1 (SGN→SIN)'))
     fig_map.add_trace(go.Scattermapbox(
         lat=[None], lon=[None], mode='markers',
         marker=dict(size=4, color='red'),
@@ -485,11 +485,11 @@ TIMELINE_DATA = {
         ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "ADS-B báo vị trí VN456 lệch >5 NM so với vết Radar SSR — nghi Spoofing."),
         ("T+00:45", "#D0021B", "🔴 Cảnh báo",   "ATCO đối chiếu Radar vs ADS-B. Xác nhận sai lệch nghiêm trọng."),
         ("T+02:00", "#D0021B", "🔴 Kích hoạt",  "Phát lệnh khẩn: tổ lái cô lập GPS, chuyển sang INS độc lập."),
-        ("T+04:00", "#C8A800", "🟡 Phối hợp",   "Phối hợp FIR HCM — Singapore. Tăng phân cách dọc lên FL20."),
+        ("T+04:00", "#C8A800", "🟡 Phối hợp",   "Phối hợp FIR HCM — Singapore. Tăng phân cách cao lên FL20."),
         ("T+15:00", "#00A550", "🟢 Phục hồi",   "Tàu bay ra khỏi vùng nhiễu. Khôi phục GNSS, xác minh bằng DME/DME."),
     ],
     "3": [
-        ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "Nhiều tàu bay mất GNSS đồng thời trên 3 luồng TSN→SIN, PNH→KUL, BKK→CGK."),
+        ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "Nhiều tàu bay mất GNSS đồng thời trên 3 luồng SGN→SIN, PNH→KUL, BKK→CGK."),
         ("T+01:00", "#D0021B", "🔴 Cảnh báo",   "FIR HCM kích hoạt GNSS SIGMET. Thông báo khẩn toàn bộ tàu bay trong vùng."),
         ("T+03:00", "#D0021B", "🔴 ATFM",       "Đình chỉ clearance PBN. Áp dụng phân cách Radar. Giảm năng lực 40%."),
         ("T+06:00", "#E8A020", "🟠 Phối hợp",   "Liên FIR: Singapore, Bangkok, Jakarta. Điều chỉnh CTOT tại sân khởi hành."),
