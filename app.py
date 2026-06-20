@@ -141,10 +141,26 @@ np.random.seed(42)
 # =====================================================
 # ĐỊNH NGHĨA DỮ LIỆU ĐƯỜNG BAY GỐC (BASE TRAJECTORIES)
 # =====================================================
-SGN_LAT, SGN_LON = 10.818, 106.652
-SIN_LAT, SIN_LON = 1.364, 103.991
-t_lat1 = np.linspace(SGN_LAT, SIN_LAT, n_points)
-t_lon1 = np.linspace(SGN_LON, SIN_LON, n_points)
+# Hàm nội suy tọa độ qua chuỗi nhiều Waypoint chuyển hệ Độ-Phút sang Thập phân
+def chuyển_độ_phút_sang_thập_phân(độ, phút):
+    return độ + (phút / 60.0)
+
+# Chuỗi tọa độ thực tế trích xuất từ hình ảnh ảnh (VVTS -> MOXEB -> NIXIV -> ESPOB -> ELALO -> WSSS)
+waypoints_route1 = [
+    (chuyển_độ_phút_sang_thập_phân(10, 49.74), chuyển_độ_phút_sang_thập_phân(106, 39.12)),  # VVTS / MOXEB
+    (chuyển_độ_phút_sang_thập_phân(9, 24.30),  chuyển_độ_phút_sang_thập_phân(106, 37.80)),  # NIXIV
+    (chuyển_độ_phút_sang_thập_phân(7, 0.98),   chuyển_độ_phút_sang_thập_phân(105, 31.78)),  # ESPOB
+    (chuyển_độ_phút_sang_thập_phân(4, 13.72),  chuyển_độ_phút_sang_thập_phân(104, 34.11)),  # ELALO
+    (chuyển_độ_phút_sang_thập_phân(1, 22.55),  chuyển_độ_phút_sang_thập_phân(103, 59.17))   # OMKOM / WSSS
+]
+
+# Chia đều số lượng `n_points` (100 điểm) dọc theo các chặng waypoint
+lats_wps, lons_wps = zip(*waypoints_route1)
+chặng_vết = np.linspace(0, 1, len(waypoints_route1))
+mốc_nội_suy = np.linspace(0, 1, n_points)
+
+t_lat1 = np.interp(mốc_nội_suy, chặng_vết, lats_wps)
+t_lon1 = np.interp(mốc_nội_suy, chặng_vết, lons_wps)
 
 PNH_LAT, PNH_LON = 11.546, 104.844
 KUL_LAT, KUL_LON = 2.745, 101.709
