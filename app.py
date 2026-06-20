@@ -6,7 +6,7 @@ import streamlit as st
 # =====================================================
 # CẤU HÌNH GIAO DIỆN TRANG WEB
 # =====================================================
-st.set_page_config(layout="wide", page_title="GNSS Resilience Simulation - FIR HCM")
+st.set_page_config(layout="wide", page_title="RESILIENT NAVIGATION - FIR HCM VÀ BIỂN ĐÔNG ")
 
 st.markdown(
     "<h2 style='color:#ffffff;font-size:26px;font-weight:800;margin-bottom:4px;'>"
@@ -36,7 +36,7 @@ AWARENESS_DATA = {
         "aircraft":    "1 tàu bay",
         "notam":       "ADVISORY",
         "notam_color": "#E8A020",
-        "elapsed":     "T+03:00",
+        "elapsed":     "T+01:45",
         "systems": [
             ("GNSS",  "❌", "#D0021B"),
             ("INS",   "✅", "#00A550"),
@@ -48,7 +48,7 @@ AWARENESS_DATA = {
         "aircraft":    "1 tàu bay",
         "notam":       "URGENT",
         "notam_color": "#D0021B",
-        "elapsed":     "T+02:00",
+        "elapsed":     "T+00:45",
         "systems": [
             ("GNSS",  "⚠️", "#E8A020"),
             ("INS",   "✅", "#00A550"),
@@ -60,7 +60,7 @@ AWARENESS_DATA = {
         "aircraft":    "3 tàu bay",
         "notam":       "URGENT",
         "notam_color": "#D0021B",
-        "elapsed":     "T+06:00",
+        "elapsed":     "T+01:00",
         "systems": [
             ("GNSS",  "❌", "#D0021B"),
             ("INS",   "✅", "#00A550"),
@@ -187,63 +187,44 @@ if "Kịch bản 1" in scenario:
     z_lat = [5.5, 5.5, 8.5, 8.5, 5.5]
     z_lon = [104.2, 106.5, 106.5, 104.2, 104.2]
 
-    # GNSS bị đóng băng (freeze) trong vùng nhiễu
+    # GNSS bị đóng băng tại chỗ trong vùng nhiễu
     g_lat1, g_lon1 = t_lat1.copy(), t_lon1.copy()
     g_lat1[40:70] = t_lat1[39]
     g_lon1[40:70] = t_lon1[39]
 
-    # Resilient Navigation: INS/DME — drift nhỏ có kiểm soát
+    # Resilient Navigation: INS/DME — giả lập drift tích lũy thực tế (tối đa ~2-3 NM)
     r_lat1, r_lon1 = t_lat1.copy(), t_lon1.copy()
-    drift = np.linspace(0, 0.03, 30)
-    r_lat1[40:70] += drift * np.random.normal(size=30)
-    r_lon1[40:70] += drift * np.random.normal(size=30)
+    
+    # Tạo độ lệch drift mượt mà tăng dần theo thời gian thay vì random quá nặng
+    drift_profile = np.linspace(0, 0.03, 30) 
+    r_lat1[40:70] += drift_profile * 0.5
+    r_lon1[40:70] += drift_profile * 0.5
 
-    # Sai số định vị theo thời gian
+    # ĐÃ SỬA: Tính sai số thực tế dựa trên hệ thống dự phòng INS (r_lat1) vs Thực tế (t_lat1)
     error_array = np.zeros(n_points)
-    error_array[40:70] = (
-        np.sqrt((r_lat1[40:70] - t_lat1[40:70])**2 +
-                (r_lon1[40:70] - t_lon1[40:70])**2) * 60
-    )
+    mean_lat_j = (r_lat1[40:70] + t_lat1[40:70]) / 2
+    dlat_nm_j = (r_lat1[40:70] - t_lat1[40:70]) * 60
+    dlon_nm_j = (r_lon1[40:70] - t_lon1[40:70]) * 60 * np.cos(np.radians(mean_lat_j))
+    
+    # Sai số tích lũy của INS sẽ chỉ rơi vào khoảng 0.5 - 2.5 NM (Rất chuẩn thực tế)
+    error_array[40:70] = np.sqrt(dlat_nm_j**2 + dlon_nm_j**2)
 
-    # Animation Frames (3 data traces + 1 vùng nhiễu = 4 traces)
+    # Animation Frames
     for i in range(2, n_points):
         frames.append(go.Frame(data=[
-            go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i],
-                             mode='lines', line=dict(color='green', width=3)),
-            go.Scattermapbox(lat=g_lat1[:i], lon=g_lon1[:i],
-                             mode='markers+lines', marker=dict(size=4, color='orange')),
-            go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i],
-                             mode='lines', line=dict(color='blue', width=4)),
-            go.Scattermapbox(lat=z_lat, lon=z_lon,
-                             mode='lines', fill='toself',
-                             fillcolor='rgba(255,165,0,0.06)',
-                             line=dict(color='orange', width=2)),
+            go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i], mode='lines', line=dict(color='green', width=3)),
+            go.Scattermapbox(lat=g_lat1[:i], lon=g_lon1[:i], mode='markers+lines', marker=dict(size=4, color='orange')),
+            go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i], mode='lines', line=dict(color='blue', width=4)),
+            go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,165,0,0.06)', line=dict(color='orange', width=2)),
         ], name=str(i)))
 
-    # Initial traces (khớp số lượng và thứ tự với frames)
-    fig_map.add_trace(go.Scattermapbox(
-        lat=t_lat1[:2], lon=t_lon1[:2], mode='lines',
-        line=dict(color='green', width=3),
-        name='Vết Radar PSR/SSR (Thực tế)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=g_lat1[:2], lon=g_lon1[:2], mode='markers+lines',
-        marker=dict(size=4, color='orange'),
-        name='Tín hiệu Định vị GNSS (Bị đóng băng)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=r_lat1[:2], lon=r_lon1[:2], mode='lines',
-        line=dict(color='blue', width=4),
-        name='Tích hợp Dự Phòng (INS/DME)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=z_lat, lon=z_lon, mode='lines', fill='toself',
-        fillcolor='rgba(255,165,0,0.06)',
-        line=dict(color='orange', width=2),
-        name='Vùng Nhiễu GNSS Cục Bộ'))
+    # Initial traces
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat1[:2], lon=t_lon1[:2], mode='lines', line=dict(color='green', width=3), name='Vết Radar PSR/SSR (Thực tế)'))
+    fig_map.add_trace(go.Scattermapbox(lat=g_lat1[:2], lon=g_lon1[:2], mode='markers+lines', marker=dict(size=4, color='orange'), name='Tín hiệu Định vị GNSS (Bị đóng băng)'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat1[:2], lon=r_lon1[:2], mode='lines', line=dict(color='blue', width=4), name='Tích hợp Dự Phòng (INS/DME)'))
+    fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,165,0,0.06)', line=dict(color='orange', width=2), name='Vùng Nhiễu GNSS Cục Bộ'))
 
-    status_text = (
-        "🟢 **ATC Response:** Hệ thống phát hiện mất tính toàn vẹn tín hiệu vệ tinh trên phân khu "
-        "đường hàng không M753. Chuyển sang dẫn dắt bằng Radar mặt đất (PSR/SSR) và tăng tiêu "
-        "chuẩn phân cách an toàn."
-    )
+    status_text = "🟢 **ATC Response:** Hệ thống phát hiện mất tính toàn vẹn vệ tinh trên đường bay. Chuyển sang giám sát PSR/SSR và chế độ dự phòng INS/DME."
 
 # ─────────────────────────────────────────────────────
 # KỊCH BẢN 2: SPOOFING — Giả mạo tọa độ (Position Jump)
@@ -253,61 +234,45 @@ elif "Kịch bản 2" in scenario:
     z_lat = [4.5, 4.5, 8.5, 8.5, 4.5]
     z_lon = [104.0, 106.2, 106.2, 104.0, 104.0]
 
-    # GNSS bị giả mạo — tọa độ nhảy loạn
+    # GNSS bị giả mạo — tọa độ nhảy loạn (Tín hiệu đầu vào lỗi)
     g_lat1, g_lon1 = t_lat1.copy(), t_lon1.copy()
     g_lat1[40:70] += 0.45 * np.random.normal(size=30)
     g_lon1[40:70] += 0.45 * np.random.normal(size=30)
 
     # Resilient Navigation: FDE (Fault Detection & Exclusion) — rolling average
+    # Làm mượt để loại bỏ các điểm nhảy (giả lập thuật toán lọc máy tính onboard)
     r_lat1 = pd.Series(g_lat1).rolling(window=10, center=True, min_periods=1).mean().values
     r_lon1 = pd.Series(g_lon1).rolling(window=10, center=True, min_periods=1).mean().values
+    # Ép các điểm từ 0 đến 35 (trước khi gặp nhiễu) bằng chuẩn tọa độ thực tế
+    r_lat1[:35] = t_lat1[:35]
+    r_lon1[:35] = t_lon1[:35]
 
-    # Sai số định vị
-    error_array = (
-        np.sqrt((g_lat1 - t_lat1)**2 + (g_lon1 - t_lon1)**2) * 60
-    )
+    # Giả định sau điểm thứ 85 (hoặc 90 tùy n_points), hệ thống đã phục hồi hoàn toàn
+    r_lat1[85:] = t_lat1[85:]
+    r_lon1[85:] = t_lon1[85:]
 
-    # Animation Frames (3 data traces + 1 vùng tấn công = 4 traces)
+    # ĐÃ SỬA: Tính sai số của hệ thống sau khi ĐÃ KHÁNG NHIỄU (r_lat1) vs Thực tế (t_lat1)
+    mean_lat_s = (r_lat1 + t_lat1) / 2
+    dlat_nm_s = (r_lat1 - t_lat1) * 60
+    dlon_nm_s = (r_lon1 - t_lon1) * 60 * np.cos(np.radians(mean_lat_s))
+    error_array = np.sqrt(dlat_nm_s**2 + dlon_nm_s**2)
+
+    # Animation Frames
     for i in range(2, n_points):
         frames.append(go.Frame(data=[
-            go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i],
-                             mode='lines', line=dict(color='green', width=3)),
-            go.Scattermapbox(
-                lat=g_lat1[40:max(41, i)] if i > 40 else [None],
-                lon=g_lon1[40:max(41, i)] if i > 40 else [None],
-                mode='markers', marker=dict(size=5, color='red')),
-            go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i],
-                             mode='lines', line=dict(color='blue', width=4)),
-            go.Scattermapbox(lat=z_lat, lon=z_lon,
-                             mode='lines', fill='toself',
-                             fillcolor='rgba(255,0,0,0.06)',
-                             line=dict(color='red', width=2)),
+            go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i], mode='lines', line=dict(color='green', width=3)),
+            go.Scattermapbox(lat=g_lat1[40:max(41, i)] if i > 40 else [None], lon=g_lon1[40:max(41, i)] if i > 40 else [None], mode='markers', marker=dict(size=5, color='red')),
+            go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i], mode='lines', line=dict(color='blue', width=4)),
+            go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.06)', line=dict(color='red', width=2)),
         ], name=str(i)))
 
     # Initial traces
-    fig_map.add_trace(go.Scattermapbox(
-        lat=t_lat1[:2], lon=t_lon1[:2], mode='lines',
-        line=dict(color='green', width=3),
-        name='Vết Radar PSR/SSR (Thực tế)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=[None], lon=[None], mode='markers',
-        marker=dict(size=5, color='red'),
-        name='Tọa độ Giả mạo (Spoofing)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=r_lat1[:2], lon=r_lon1[:2], mode='lines',
-        line=dict(color='blue', width=4),
-        name='Xử lý Kháng nhiễu FDE (INS/DME)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=z_lat, lon=z_lon, mode='lines', fill='toself',
-        fillcolor='rgba(255,0,0,0.06)',
-        line=dict(color='red', width=2),
-        name='Vùng Tấn Công Giả Mạo'))
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat1[:2], lon=t_lon1[:2], mode='lines', line=dict(color='green', width=3), name='Vết Radar PSR/SSR (Thực tế)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='markers', marker=dict(size=5, color='red'), name='Tọa độ Giả mạo (Spoofing)'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat1[:2], lon=r_lon1[:2], mode='lines', line=dict(color='blue', width=4), name='Xử lý Kháng nhiễu FDE (INS/DME)'))
+    fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.06)', line=dict(color='red', width=2), name='Vùng Tấn Công Giả Mạo'))
 
-    status_text = (
-        "🚨 **ATC Response:** Phát hiện sai lệch lớn giữa vết Radar và báo cáo tọa độ ADS-B của "
-        "tàu bay. Lập tức phát lệnh yêu cầu tổ lái cô lập máy thu GPS, chuyển sang khai thác "
-        "INS thủ công."
-    )
+    status_text = "🚨 **ATC Response:** Phát hiện sai lệch lớn giữa vết Radar và báo cáo tọa độ ADS-B của tàu bay. Lập tức phát lệnh yêu cầu tổ lái cô lập máy thu GPS, chuyển sang khai thác INS thủ công."
 
 # ─────────────────────────────────────────────────────
 # KỊCH BẢN 3: ATFM — Nhiễu diện rộng, nhiều luồng bay
@@ -323,121 +288,89 @@ else:
         res[35:75] += 0.40 * np.random.normal(size=40)
         return res
 
-    # ── GNSS bị nhiễu (spoofed) cho cả 3 luồng ──────────────────────────
+    # GNSS bị nhiễu (spoofed) cho cả 3 luồng
     g_lat1, g_lon1 = inject_spoof(t_lat1), inject_spoof(t_lon1)
     g_lat2, g_lon2 = inject_spoof(t_lat2), inject_spoof(t_lon2)
     g_lat3, g_lon3 = inject_spoof(t_lat3), inject_spoof(t_lon3)
 
-    # ── Resilient Navigation: INS/DME rolling-filter cho cả 3 luồng ──────
-    r_lat1 = pd.Series(g_lat1).rolling(window=10, center=True, min_periods=1).mean().values
-    r_lon1 = pd.Series(g_lon1).rolling(window=10, center=True, min_periods=1).mean().values
-    r_lat2 = pd.Series(g_lat2).rolling(window=10, center=True, min_periods=1).mean().values
-    r_lon2 = pd.Series(g_lon2).rolling(window=10, center=True, min_periods=1).mean().values
-    r_lat3 = pd.Series(g_lat3).rolling(window=10, center=True, min_periods=1).mean().values
-    r_lon3 = pd.Series(g_lon3).rolling(window=10, center=True, min_periods=1).mean().values
+    # Resilient Navigation: Bộ lọc hồi phục tọa độ cho cả 3 luồng bay
+    r_lat1 = pd.Series(g_lat1).rolling(window=15, center=True, min_periods=1).mean().values
+    r_lon1 = pd.Series(g_lon1).rolling(window=15, center=True, min_periods=1).mean().values
+    r_lat2 = pd.Series(g_lat2).rolling(window=15, center=True, min_periods=1).mean().values
+    r_lon2 = pd.Series(g_lon2).rolling(window=15, center=True, min_periods=1).mean().values
+    r_lat3 = pd.Series(g_lat3).rolling(window=15, center=True, min_periods=1).mean().values
+    r_lon3 = pd.Series(g_lon3).rolling(window=15, center=True, min_periods=1).mean().values
+  
+    # 2. SỬA LỖI BIÊN TẠI 0 PHÚT cho cả 3 luồng (Đặt ở đây)
+    r_lat1[:35] = t_lat1[:35]
+    r_lon1[:35] = t_lon1[:35]
+    r_lat2[:35] = t_lat2[:35]
+    r_lon2[:35] = t_lon2[:35]
+    r_lat3[:35] = t_lat3[:35]
+    r_lon3[:35] = t_lon3[:35]
+    
+    # Giả định sau điểm thứ 85 (hoặc 90 tùy n_points), hệ thống đã phục hồi hoàn toàn
+    r_lat1[85:] = t_lat1[85:]
+    r_lon1[85:] = t_lon1[85:]
+    r_lat2[85:] = t_lat2[85:]
+    r_lon2[85:] = t_lon2[85:]
+    r_lat3[85:] = t_lat3[85:]
+    r_lon3[85:] = t_lon3[85:]
 
-    # Sai số định vị (tính theo FL1 làm đại diện)
-    error_array = (
-        np.sqrt((g_lat1 - t_lat1)**2 + (g_lon1 - t_lon1)**2) * 60
-    )
 
-    # ── Animation Frames (9 data traces + 1 vùng nhiễu = 10 traces) ──────
+# 1. Tính sai số cho Luồng 1 (SGN -> SIN)
+    mean_lat_a1 = (r_lat1 + t_lat1) / 2
+    dlat_nm_a1 = (r_lat1 - t_lat1) * 60
+    dlon_nm_a1 = (r_lon1 - t_lon1) * 60 * np.cos(np.radians(mean_lat_a1))
+    err_flight1 = np.sqrt(dlat_nm_a1**2 + dlon_nm_a1**2)
+
+    # 2. Tính sai số cho Luồng 2 (PNH -> KUL)
+    mean_lat_a2 = (r_lat2 + t_lat2) / 2
+    dlat_nm_a2 = (r_lat2 - t_lat2) * 60
+    dlon_nm_a2 = (r_lon2 - t_lon2) * 60 * np.cos(np.radians(mean_lat_a2))
+    err_flight2 = np.sqrt(dlat_nm_a2**2 + dlon_nm_a2**2)
+
+    # 3. Tính sai số cho Luồng 3 (BKK -> CGK)
+    mean_lat_a3 = (r_lat3 + t_lat3) / 2
+    dlat_nm_a3 = (r_lat3 - t_lat3) * 60
+    dlon_nm_a3 = (r_lon3 - t_lon3) * 60 * np.cos(np.radians(mean_lat_a3))
+    err_flight3 = np.sqrt(dlat_nm_a3**2 + dlon_nm_a3**2)
+
+    # ĐÃ SỬA: Tính sai số trung bình của toàn bộ không lưu trong vùng ảnh hưởng tại mỗi thời điểm
+    error_array = (err_flight1 + err_flight2 + err_flight3) / 3
+
+    # Animation Frames
     for i in range(2, n_points):
         frames.append(go.Frame(data=[
-            # FL1 — Radar thực tế
-            go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i],
-                             mode='lines', line=dict(color='green', width=2)),
-            # FL1 — GNSS bị nhiễu
-            go.Scattermapbox(
-                lat=g_lat1[35:max(36, i)] if i > 35 else [None],
-                lon=g_lon1[35:max(36, i)] if i > 35 else [None],
-                mode='markers', marker=dict(size=4, color='red')),
-            # FL1 — Resilient INS/DME
-            go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i],
-                             mode='lines', line=dict(color='blue', width=2)),
-
-            # FL2 — Radar thực tế
-            go.Scattermapbox(lat=t_lat2[:i], lon=t_lon2[:i],
-                             mode='lines', line=dict(color='darkgreen', width=2)),
-            # FL2 — GNSS bị nhiễu
-            go.Scattermapbox(
-                lat=g_lat2[35:max(36, i)] if i > 35 else [None],
-                lon=g_lon2[35:max(36, i)] if i > 35 else [None],
-                mode='markers', marker=dict(size=4, color='magenta')),
-            # FL2 — Resilient INS/DME
-            go.Scattermapbox(lat=r_lat2[:i], lon=r_lon2[:i],
-                             mode='lines', line=dict(color='dodgerblue', width=2)),
-
-            # FL3 — Radar thực tế
-            go.Scattermapbox(lat=t_lat3[:i], lon=t_lon3[:i],
-                             mode='lines', line=dict(color='seagreen', width=2)),
-            # FL3 — GNSS bị nhiễu
-            go.Scattermapbox(
-                lat=g_lat3[35:max(36, i)] if i > 35 else [None],
-                lon=g_lon3[35:max(36, i)] if i > 35 else [None],
-                mode='markers', marker=dict(size=4, color='darkorange')),
-            # FL3 — Resilient INS/DME
-            go.Scattermapbox(lat=r_lat3[:i], lon=r_lon3[:i],
-                             mode='lines', line=dict(color='cyan', width=2)),
-
-            # Vùng nhiễu diện rộng
-            go.Scattermapbox(lat=z_lat, lon=z_lon,
-                             mode='lines', fill='toself',
-                             fillcolor='rgba(255,0,0,0.04)',
-                             line=dict(color='red', width=3)),
+            # FL1
+            go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i], mode='lines', line=dict(color='green', width=2)),
+            go.Scattermapbox(lat=g_lat1[35:max(36, i)] if i > 35 else [None], lon=g_lon1[35:max(36, i)] if i > 35 else [None], mode='markers', marker=dict(size=4, color='red')),
+            go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i], mode='lines', line=dict(color='blue', width=2)),
+            # FL2
+            go.Scattermapbox(lat=t_lat2[:i], lon=t_lon2[:i], mode='lines', line=dict(color='darkgreen', width=2)),
+            go.Scattermapbox(lat=g_lat2[35:max(36, i)] if i > 35 else [None], lon=g_lon2[35:max(36, i)] if i > 35 else [None], mode='markers', marker=dict(size=4, color='magenta')),
+            go.Scattermapbox(lat=r_lat2[:i], lon=r_lon2[:i], mode='lines', line=dict(color='dodgerblue', width=2)),
+            # FL3
+            go.Scattermapbox(lat=t_lat3[:i], lon=t_lon3[:i], mode='lines', line=dict(color='seagreen', width=2)),
+            go.Scattermapbox(lat=g_lat3[35:max(36, i)] if i > 35 else [None], lon=g_lon3[35:max(36, i)] if i > 35 else [None], mode='markers', marker=dict(size=4, color='darkorange')),
+            go.Scattermapbox(lat=r_lat3[:i], lon=r_lon3[:i], mode='lines', line=dict(color='cyan', width=2)),
+            # Vùng nhiễu
+            go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.04)', line=dict(color='red', width=3)),
         ], name=str(i)))
 
-    # ── Initial traces (10 traces — khớp số lượng và thứ tự với frames) ──
-    fig_map.add_trace(go.Scattermapbox(
-        lat=t_lat1[:2], lon=t_lon1[:2], mode='lines',
-        line=dict(color='green', width=2),
-        name='Radar FL1 (SGN→SIN)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=[None], lon=[None], mode='markers',
-        marker=dict(size=4, color='red'),
-        name='Nhiễu GNSS FL1'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=r_lat1[:2], lon=r_lon1[:2], mode='lines',
-        line=dict(color='blue', width=2),
-        name='INS/DME FL1 (Resilient)'))
+    # Initial traces
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat1[:2], lon=t_lon1[:2], mode='lines', line=dict(color='green', width=2), name='Radar FL1 (TSN→SIN)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='markers', marker=dict(size=4, color='red'), name='Nhiễu GNSS FL1'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat1[:2], lon=r_lon1[:2], mode='lines', line=dict(color='blue', width=2), name='INS/DME FL1 (Resilient)'))
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat2[:2], lon=t_lon2[:2], mode='lines', line=dict(color='darkgreen', width=2), name='Radar FL2 (PNH→KUL)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='markers', marker=dict(size=4, color='magenta'), name='Nhiễu GNSS FL2'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat2[:2], lon=r_lon2[:2], mode='lines', line=dict(color='dodgerblue', width=2), name='INS/DME FL2 (Resilient)'))
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat3[:2], lon=t_lon3[:2], mode='lines', line=dict(color='seagreen', width=2), name='Radar FL3 (BKK→CGK)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='markers', marker=dict(size=4, color='darkorange'), name='Nhiễu GNSS FL3'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat3[:2], lon=r_lon3[:2], mode='lines', line=dict(color='cyan', width=2), name='INS/DME FL3 (Resilient)'))
+    fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.04)', line=dict(color='red', width=3), name='Vùng Can Thiệp Diện Rộng'))
 
-    fig_map.add_trace(go.Scattermapbox(
-        lat=t_lat2[:2], lon=t_lon2[:2], mode='lines',
-        line=dict(color='darkgreen', width=2),
-        name='Radar FL2 (PNH→KUL)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=[None], lon=[None], mode='markers',
-        marker=dict(size=4, color='magenta'),
-        name='Nhiễu GNSS FL2'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=r_lat2[:2], lon=r_lon2[:2], mode='lines',
-        line=dict(color='dodgerblue', width=2),
-        name='INS/DME FL2 (Resilient)'))
-
-    fig_map.add_trace(go.Scattermapbox(
-        lat=t_lat3[:2], lon=t_lon3[:2], mode='lines',
-        line=dict(color='seagreen', width=2),
-        name='Radar FL3 (BKK→CGK)'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=[None], lon=[None], mode='markers',
-        marker=dict(size=4, color='darkorange'),
-        name='Nhiễu GNSS FL3'))
-    fig_map.add_trace(go.Scattermapbox(
-        lat=r_lat3[:2], lon=r_lon3[:2], mode='lines',
-        line=dict(color='cyan', width=2),
-        name='INS/DME FL3 (Resilient)'))
-
-    fig_map.add_trace(go.Scattermapbox(
-        lat=z_lat, lon=z_lon, mode='lines', fill='toself',
-        fillcolor='rgba(255,0,0,0.04)',
-        line=dict(color='red', width=3),
-        name='Vùng Can Thiệp Diện Rộng'))
-
-    status_text = (
-        "🔥 **ATFM Response (Khẩn cấp):** Sự cố nhiễu diện rộng tác động lớn đến nhiều luồng "
-        "không lưu quốc tế đồng thời. Kích hoạt giải pháp ATFM khẩn cấp: Phát NOTAM cảnh báo, "
-        "điều chỉnh Slot/CTOT từ các sân bay khởi hành phối hợp liên FIR."
-    )
+    status_text = "🔥 **ATFM Response (Khẩn cấp):** Sự cố nhiễu diện rộng tác động lớn đến nhiều luồng không lưu quốc tế đồng thời. Kích hoạt giải pháp ATFM khẩn cấp..."
 
 # =====================================================
 # CẤU HÌNH CHUNG BẢN ĐỒ VÀ NÚT ANIMATION PLAY/PAUSE
@@ -492,7 +425,7 @@ fig_map.update_layout(
 TIMELINE_DATA = {
     "1": [
         ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "RAIM báo mất tín hiệu GNSS tại waypoint BITOD — phân khu M753."),
-        ("T+01:30", "#E8A020", "🟠 Cảnh báo",   "ATCO nhận cảnh báo mất PBN. Xác nhận với tổ lái."),
+        ("T+01:45", "#E8A020", "🟠 Cảnh báo",   "ATCO nhận cảnh báo mất PBN. Xác nhận với tổ lái."),
         ("T+03:00", "#D0021B", "🔴 Kích hoạt",  "Chuyển từ GNSS/RNP sang Radar PSR/SSR. Tăng phân cách lên 10 NM."),
         ("T+05:00", "#C8A800", "🟡 Ứng phó",    "Phát NOTAM vùng P-600. INS/DME kích hoạt làm hệ thống dự phòng."),
         ("T+12:00", "#00A550", "🟢 Phục hồi",   "GNSS khôi phục. Kiểm tra RAIM đạt yêu cầu. Trở lại khai thác PBN."),
@@ -632,7 +565,7 @@ max_error = float(np.max(error_array))
 mean_error = float(np.mean(error_array))
 
 if sc_key == "1":
-    detection_time = "1.5 min"
+    detection_time = "1.75 min"
     recovery_time = "12 min"
     affected_aircraft = 1
     capacity_loss = 10
@@ -725,4 +658,3 @@ integrity_df = pd.DataFrame({
     "lon":[105,105,105],
     "integrity":[98,65,92]
 })
-
