@@ -85,26 +85,24 @@ for s, ic, c in aw["systems"]:
     )
 
 _aw_html = (
-    "<div style='background:#0d1117;border-radius:8px;padding:12px 14px;'>"
+    "<div style='background:#0d1117;border-radius:8px;padding:12px 14px; box-sizing: border-box;'>"
 
     "<p style='font-size:12px;font-weight:800;color:#7eb3d8;margin:0 0 10px 0;"
     "letter-spacing:.6px;'>🔌 SITUATIONAL AWARENESS</p>"
 
-    "<div style='display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px;'>"
-
-    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px; display: block; min-width: 100%; box-sizing: border-box;'>"
+    # --- KHUNG 1: TÀU BAY ẢNH HƯỞNG (Đã đưa ra ngoài Grid và đặt margin-bottom để giãn cách) ---
+    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;margin-bottom:7px; box-sizing: border-box;'>"
     "<div style='font-size:10px;color:#7eb3d8;font-weight:700;margin-bottom:3px;'>TÀU BAY ẢNH HƯỞNG</div>"
     f"<div style='font-size:15px;font-weight:800;color:#ffffff;'>{aw['aircraft']}</div>"
     "</div>"
 
-
-    "</div>"
-
-    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;margin-bottom:9px; width: 100%; box-sizing: border-box;'>"
+    # --- KHUNG 2: MỨC ĐỘ NOTAM ---
+    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;margin-bottom:9px; box-sizing: border-box;'>"
     "<div style='font-size:10px;color:#7eb3d8;font-weight:700;margin-bottom:4px;'>MỨC ĐỘ NOTAM</div>"
     f"<div style='font-size:14px;font-weight:800;color:{aw['notam_color']};'>⚠ {aw['notam']}</div>"
     "</div>"
 
+    # --- KHUNG 3: TRẠNG THÁI HỆ THỐNG ---
     "<div style='font-size:10px;color:#7eb3d8;font-weight:700;margin-bottom:5px;'>TRẠNG THÁI HỆ THỐNG</div>"
     + _sys_rows +
     "</div>"
