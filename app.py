@@ -97,10 +97,6 @@ _aw_html = (
     f"<div style='font-size:15px;font-weight:800;color:#ffffff;'>{aw['aircraft']}</div>"
     "</div>"
 
-    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;'>"
-    "<div style='font-size:10px;color:#7eb3d8;font-weight:700;margin-bottom:3px;'>THỜI GIAN</div>"
-    f"<div style='font-size:15px;font-weight:800;color:#ffffff;font-family:monospace;'>{aw['elapsed']}</div>"
-    "</div>"
 
     "</div>"
 
