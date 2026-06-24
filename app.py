@@ -92,7 +92,7 @@ _aw_html = (
 
     "<div style='display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:8px;'>"
 
-    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;'>"
+    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px; width: 100%; box-sizing: border-box;'>"
     "<div style='font-size:10px;color:#7eb3d8;font-weight:700;margin-bottom:3px;'>TÀU BAY ẢNH HƯỞNG</div>"
     f"<div style='font-size:15px;font-weight:800;color:#ffffff;'>{aw['aircraft']}</div>"
     "</div>"
@@ -100,7 +100,7 @@ _aw_html = (
 
     "</div>"
 
-    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;margin-bottom:9px;'>"
+    "<div style='background:#1e2130;border-radius:6px;padding:8px 10px;margin-bottom:9px; width: 100%; box-sizing: border-box;'>"
     "<div style='font-size:10px;color:#7eb3d8;font-weight:700;margin-bottom:4px;'>MỨC ĐỘ NOTAM</div>"
     f"<div style='font-size:14px;font-weight:800;color:{aw['notam_color']};'>⚠ {aw['notam']}</div>"
     "</div>"
