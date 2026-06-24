@@ -36,7 +36,6 @@ AWARENESS_DATA = {
         "aircraft":    "1 tàu bay",
         "notam":       "ADVISORY",
         "notam_color": "#E8A020",
-        "elapsed":     "T+01:45",
         "systems": [
             ("GNSS",  "❌", "#D0021B"),
             ("INS",   "✅", "#00A550"),
@@ -48,7 +47,6 @@ AWARENESS_DATA = {
         "aircraft":    "1 tàu bay",
         "notam":       "URGENT",
         "notam_color": "#D0021B",
-        "elapsed":     "T+00:45",
         "systems": [
             ("GNSS",  "⚠️", "#E8A020"),
             ("INS",   "✅", "#00A550"),
@@ -60,7 +58,6 @@ AWARENESS_DATA = {
         "aircraft":    "3 tàu bay",
         "notam":       "URGENT",
         "notam_color": "#D0021B",
-        "elapsed":     "T+01:00",
         "systems": [
             ("GNSS",  "❌", "#D0021B"),
             ("INS",   "✅", "#00A550"),
@@ -424,26 +421,26 @@ fig_map.update_layout(
 # ── Timeline ứng phó ──────────────────────────────────────────────────
 TIMELINE_DATA = {
     "1": [
-        ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "RAIM báo mất tín hiệu GNSS tại waypoint BITOD — phân khu M753."),
-        ("T+01:45", "#E8A020", "🟠 Cảnh báo",   "ATCO nhận cảnh báo mất PBN. Xác nhận với tổ lái."),
-        ("T+03:00", "#D0021B", "🔴 Kích hoạt",  "Chuyển từ GNSS/RNP sang Radar PSR/SSR. Tăng phân cách lên 10 NM."),
-        ("T+05:00", "#C8A800", "🟡 Ứng phó",    "Phát NOTAM vùng P-600. INS/DME kích hoạt làm hệ thống dự phòng."),
-        ("T+12:00", "#00A550", "🟢 Phục hồi",   "GNSS khôi phục. Kiểm tra RAIM đạt yêu cầu. Trở lại khai thác PBN."),
+        ("T+00:00", "#4A90E2", "🔵 Sự cố",      "Tàu bay đi vào khu vực nhiễu GNSS."),
+        ("T+00:45", "#E8A020", "🟠 Cảnh báo",   "RAIM cảnh báo mất tính toàn vẹn tín hiệu GNSS. Tổ lái báo cáo ATC về sự cố"),
+        ("T+03:00", "#D0021B", "🔴 Ứng phó",    "ATCO xác nhận sự cố, chuyển sang giám sát bằng Radar PSR/SSR và áp dụng phân cách Radar."),
+        ("T+10:00", "#C8A800", "🟡 Điều hành",  "Phát hành NOTAM cảnh báo nhiễu GNSS, khuyến cáo sử dụng INS/DME dự phòng."),
+        ("T+12:00", "#00A550", "🟢 Phục hồi",   "Nhiễu được loại bỏ. GNSS khôi phục. Trở lại khai thác PBN."),
     ],
     "2": [
-        ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "ADS-B báo vị trí VN456 lệch >5 NM so với vết Radar SSR — nghi Spoofing."),
-        ("T+00:45", "#D0021B", "🔴 Cảnh báo",   "ATCO đối chiếu Radar vs ADS-B. Xác nhận sai lệch nghiêm trọng."),
-        ("T+02:00", "#D0021B", "🔴 Kích hoạt",  "Phát lệnh khẩn: tổ lái cô lập GPS, chuyển sang INS độc lập."),
-        ("T+04:00", "#C8A800", "🟡 Phối hợp",   "Phối hợp FIR HCM — Singapore. Tăng phân cách cao lên FL20."),
-        ("T+15:00", "#00A550", "🟢 Phục hồi",   "Tàu bay ra khỏi vùng nhiễu. Khôi phục GNSS, xác minh bằng DME/DME."),
+        ("T+00:00", "#4A90E2", "🔵 Sự cố",      "Tín hiệu GNSS giả mạo xuất hiện, vị trí GNSS sai lệch khỏi quỹ đạo thực tế."),
+        ("T+01:00", "#D0021B", "🔴 Phát hiện",  "ATCO phát hiện sai lệch giữa ADS-B, Radar SSR và dữ liệu dẫn đường."),
+        ("T+03:00", "#D0021B", "🔴 Xác nhận",   "Nghi ngờ hiện tượng Spoofing và yêu cầu tố lái thực hiện đối chiếu vị trí bằng INS."),
+        ("T+05:00", "#C8A800", "🟡 Ứng phó",    "Theo dõi tàu bay và duy trì phân cách an toàn, tàu bay chuyển sang khai thác INS/DME."),
+        ("T+15:00", "#00A550", "🟢 Phục hồi",   "Tàu bay ra khỏi vùng nhiễu. Khôi phục GNSS, khai thác bình thường."),
     ],
     "3": [
-        ("T+00:00", "#4A90E2", "🔵 Phát hiện",  "Nhiều tàu bay mất GNSS đồng thời trên 3 luồng SGN→SIN, PNH→KUL, BKK→CGK."),
-        ("T+01:00", "#D0021B", "🔴 Cảnh báo",   "FIR HCM kích hoạt GNSS SIGMET. Thông báo khẩn toàn bộ tàu bay trong vùng."),
-        ("T+03:00", "#D0021B", "🔴 ATFM",       "Đình chỉ clearance PBN. Áp dụng phân cách Radar. Giảm năng lực 40%."),
-        ("T+06:00", "#E8A020", "🟠 Phối hợp",   "Liên FIR: Singapore, Bangkok, Jakarta. Điều chỉnh CTOT tại sân khởi hành."),
-        ("T+10:00", "#C8A800", "🟡 Ổn định",    "NOTAM chính thức. INS/DME dự phòng ổn định trên các luồng ảnh hưởng."),
-        ("T+30:00", "#00A550", "🟢 Phục hồi",   "Nguồn nhiễu vô hiệu hóa. Khôi phục dần năng lực PBN theo từng phân khu."),
+        ("T+00:00", "#4A90E2", "🔵 Sự cố",      "Nhiều tàu bay mất GNSS đồng thời trên 3 luồng SGN→SIN, PNH→KUL, BKK→CGK."),
+        ("T+03:00", "#D0021B", "🔴 Phát hiện",  "ACC HCM nhận báo cáo mất hoặc suy giảm tín hiệu GNSS từ tàu bay. Đánh giá sự cố."),
+        ("T+05:00", "#D0021B", "🔴 ATFM",       "Kích hoạt ATFM, tăng phân cách và hạn chế khai thác các phương thức PBN."),
+        ("T+10:00", "#E8A020", "🟠 Phối hợp",   "Phát hành SIGMET và NOTAM, phối hợp với các FIR Singapore, Bangkok và Jakarta."),
+        ("T+15:00", "#C8A800", "🟡 Ổn định",    "Duy trì dẫn đường bằng INS/DME và Radar. Luồng được kiểm soát ổn định ở mức giảm tải."),
+        ("T+30:00", "#00A550", "🟢 Phục hồi",   "Nguồn nhiễu vô hiệu hóa. Hoạt động dẫn đường GNSS và năng lực khai thác vùng trời được khôi phục."),
     ],
 }
 
@@ -451,21 +448,21 @@ TIMELINE_DATA = {
 NAV_TABLE_DATA = {
     "1": [
         ("GNSS / GPS",     "❌",  "Không khả dụng", "#D0021B", "Bị Jamming — RAIM báo lỗi toàn vẹn"),
-        ("INS (Quán tính)","✅",  "±0.5 NM",        "#00A550", "Dẫn đường dự phòng chính — drift tăng dần"),
-        ("DME/DME",        "✅",  "±0.3 NM",        "#00A550", "Hỗ trợ hiệu chỉnh vị trí cho INS"),
-        ("Radar PSR/SSR",  "✅",  "±0.1 NM",        "#00A550", "ATC chuyển sang dẫn dắt Radar mặt đất"),
+        ("INS (Quán tính)","✅",  "±0.5-2 NM",      "#00A550", "Dẫn đường dự phòng chính — drift tăng dần"),
+        ("DME/DME",        "✅",  "±0.2-0.5 NM",    "#00A550", "Hỗ trợ hiệu chỉnh vị trí cho INS"),
+        ("Radar PSR/SSR",  "✅",  "±0.3 NM",        "#00A550", "ATC chuyển sang dẫn dắt Radar mặt đất"),
     ],
     "2": [
         ("GNSS / GPS",     "⚠️", "Lệch >5 NM",     "#E8A020", "Spoofing — tọa độ ADS-B sai lệch nghiêm trọng"),
         ("INS (Quán tính)","✅",  "±0.5 NM",        "#00A550", "Cô lập GPS, chuyển hoàn toàn sang INS"),
         ("DME/DME",        "✅",  "±0.3 NM",        "#00A550", "Cross-check vị trí độc lập với GNSS"),
-        ("Radar PSR/SSR",  "✅",  "±0.1 NM",        "#00A550", "Nguồn tham chiếu vị trí tin cậy của ATC"),
+        ("Radar PSR/SSR",  "✅",  "±0.3 NM",        "#00A550", "Nguồn tham chiếu vị trí tin cậy của ATC"),
     ],
     "3": [
         ("GNSS / GPS",     "❌",  "Không khả dụng", "#D0021B", "Ảnh hưởng đồng thời 3 luồng bay quốc tế"),
-        ("INS (Quán tính)","✅",  "±0.8 NM",        "#00A550", "Drift tích lũy cao do thời gian bay dài"),
+        ("INS (Quán tính)","✅",  "±0.8-2 NM",      "#00A550", "Drift tích lũy cao do thời gian bay dài"),
         ("DME/DME",        "✅",  "±0.3 NM",        "#00A550", "Ưu tiên khai thác tại các vùng có phủ sóng"),
-        ("Radar PSR/SSR",  "⚠️", "±0.1 NM",        "#E8A020", "Năng lực Radar hạn chế khi nhiều luồng đồng thời"),
+        ("Radar PSR/SSR",  "⚠️", "±0.1 NM",         "#E8A020", "Năng lực Radar hạn chế khi nhiều luồng đồng thời"),
         ("ATFM / CTOT",    "✅",  "—",              "#00A550", "Giảm tải luồng từ sân khởi hành — phối hợp liên FIR"),
     ],
 }
@@ -565,21 +562,21 @@ max_error = float(np.max(error_array))
 mean_error = float(np.mean(error_array))
 
 if sc_key == "1":
-    detection_time = "1.75 min"
+    detection_time = "45 sec"
     recovery_time = "12 min"
     affected_aircraft = 1
     capacity_loss = 10
     severity = "E NO SAFETY EFFECT - ADVISORY"
     sev_color = "orange"
 elif sc_key == "2":
-    detection_time = "45 sec"
+    detection_time = "1 min"
     recovery_time = "15 min"
     affected_aircraft = 1
     capacity_loss = 15
     severity = "C SIGNIFICANT INCIDENT - CRITICAL"
     sev_color = "red"
 else:
-    detection_time = "1 min"
+    detection_time = "3 min"
     recovery_time = "30 min"
     affected_aircraft = 3
     capacity_loss = 40
