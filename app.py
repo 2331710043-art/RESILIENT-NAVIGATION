@@ -23,7 +23,8 @@ scenario = st.sidebar.selectbox(
     [
         "Kịch bản 1: Mất tín hiệu GNSS cục bộ (Jamming)",
         "Kịch bản 2: Tấn công giả mạo tọa độ (Spoofing - Position Jump)",
-        "Kịch bản 3: Nhiễu vô tuyến diện rộng & Quản lý luồng (ATFM)"
+        "Kịch bản 3: Nhiễu vô tuyến diện rộng & Quản lý luồng (ATFM)",
+        "Kịch bản 4: Circle Spoofing diện rộng (Tấn công phối hợp - Trường Sa)"
     ]
 )
 
@@ -65,11 +66,23 @@ AWARENESS_DATA = {
             ("Radar", "⚠️", "#E8A020"),
         ],
     },
+    "Kịch bản 4": {
+        "aircraft":    "3+ tàu bay",
+        "notam":       "CRITICAL",
+        "notam_color": "#D0021B",
+        "systems": [
+            ("GNSS",  "❌", "#D0021B"),
+            ("INS",   "✅", "#00A550"),
+            ("DME",   "⚠️", "#E8A020"),
+            ("Radar", "⚠️", "#E8A020"),
+        ],
+    },
 }
 
 _aw_key = (
     "Kịch bản 1" if "Kịch bản 1" in scenario else
-    ("Kịch bản 2" if "Kịch bản 2" in scenario else "Kịch bản 3")
+    ("Kịch bản 2" if "Kịch bản 2" in scenario else
+     ("Kịch bản 3" if "Kịch bản 3" in scenario else "Kịch bản 4"))
 )
 aw = AWARENESS_DATA[_aw_key]
 
@@ -115,6 +128,7 @@ _scenario_labels = {
     "Kịch bản 1": ("🔶", "#E8A020", "Kịch bản 1 — Mất tín hiệu GNSS cục bộ (Jamming)"),
     "Kịch bản 2": ("🔴", "#D0021B", "Kịch bản 2 — Tấn công giả mạo tọa độ (Spoofing)"),
     "Kịch bản 3": ("🔥", "#c0392b", "Kịch bản 3 — Nhiễu diện rộng & Quản lý luồng (ATFM)"),
+    "Kịch bản 4": ("🎯", "#8e0000", "Kịch bản 4 — Circle Spoofing diện rộng (Trường Sa)"),
 }
 for _key, (_icon, _color, _label) in _scenario_labels.items():
     if _key in scenario:
@@ -162,6 +176,25 @@ BKK_LAT, BKK_LON = 13.690, 100.750
 CGK_LAT, CGK_LON = -6.126, 106.656
 t_lat3 = np.linspace(BKK_LAT, CGK_LAT, n_points)
 t_lon3 = np.linspace(BKK_LON, CGK_LON, n_points)
+
+# ── KB4: 3 luồng bay khu vực Nam FIR HCM / vùng tiếp giáp Trường Sa ──
+# Luồng A: Vũng Tàu (VVTS) hướng Đông Nam qua Trường Sa
+VTA_LAT, VTA_LON = 10.30, 107.10
+SPA_LAT, SPA_LON = 7.90,  113.60
+t_lat4a = np.linspace(VTA_LAT, SPA_LAT, n_points)
+t_lon4a = np.linspace(VTA_LON, SPA_LON, n_points)
+
+# Luồng B: Côn Đảo hướng Đông Nam qua Nam Trường Sa
+CDO_LAT, CDO_LON = 8.70, 106.60
+SPB_LAT, SPB_LON = 6.30, 114.10
+t_lat4b = np.linspace(CDO_LAT, SPB_LAT, n_points)
+t_lon4b = np.linspace(CDO_LON, SPB_LON, n_points)
+
+# Luồng C: Phú Quý hướng Đông qua giữa Trường Sa
+PQY_LAT, PQY_LON = 10.90, 108.90
+SPC_LAT, SPC_LON = 8.90,  112.50
+t_lat4c = np.linspace(PQY_LAT, SPC_LAT, n_points)
+t_lon4c = np.linspace(PQY_LON, SPC_LON, n_points)
 
 # =====================================================
 # XỬ LÝ LOGIC TOÁN HỌC VÀ ĐÓNG GÓI ANIMATION FRAMES
@@ -268,7 +301,7 @@ elif "Kịch bản 2" in scenario:
 # ─────────────────────────────────────────────────────
 # KỊCH BẢN 3: ATFM — Nhiễu diện rộng, nhiều luồng bay
 # ─────────────────────────────────────────────────────
-else:
+elif "Kịch bản 3" in scenario:
     # Vùng nhiễu diện rộng
     z_lat = [3.0, 3.0, 9.5, 9.5, 3.0]
     z_lon = [101.5, 107.5, 107.5, 101.5, 101.5]
@@ -363,15 +396,141 @@ else:
 
     status_text = "🔥 **ATFM Response (Khẩn cấp):** Sự cố nhiễu diện rộng tác động lớn đến nhiều luồng không lưu quốc tế đồng thời. Kích hoạt giải pháp ATFM khẩn cấp..."
 
+# ─────────────────────────────────────────────────────
+# KỊCH BẢN 4: CIRCLE SPOOFING DIỆN RỘNG — Tấn công phối hợp
+# (Nam FIR HCM / vùng tiếp giáp Trường Sa)
+# ─────────────────────────────────────────────────────
+else:
+    # Vùng tấn công phối hợp — Nam FIR HCM / tiếp giáp Trường Sa
+    z_lat = [5.8, 5.8, 10.8, 10.8, 5.8]
+    z_lon = [110.0, 116.5, 116.5, 110.0, 110.0]
+
+    SPOOF_START, SPOOF_END = 30, 82  # đoạn hành trình bị "circle spoofing"
+
+    def inject_circle_spoof(t_lat, t_lon, n_loops=2.2, radius_deg=0.28):
+        """Giả mạo tọa độ GNSS theo dạng đường tròn (vòng lặp) quanh 1 tâm cố định —
+        dấu hiệu đặc trưng của tấn công Circle/Orbit Spoofing phối hợp."""
+        g_lat, g_lon = t_lat.copy(), t_lon.copy()
+        seg_len = SPOOF_END - SPOOF_START
+        center_lat = t_lat[(SPOOF_START + SPOOF_END) // 2]
+        center_lon = t_lon[(SPOOF_START + SPOOF_END) // 2]
+        angles = np.linspace(0, n_loops * 2 * np.pi, seg_len)
+        g_lat[SPOOF_START:SPOOF_END] = center_lat + radius_deg * np.sin(angles)
+        g_lon[SPOOF_START:SPOOF_END] = center_lon + radius_deg * np.cos(angles) * 0.9
+        return g_lat, g_lon
+
+    # GNSS bị "circle spoofing" đồng thời trên cả 3 luồng
+    g_lat4a, g_lon4a = inject_circle_spoof(t_lat4a, t_lon4a)
+    g_lat4b, g_lon4b = inject_circle_spoof(t_lat4b, t_lon4b)
+    g_lat4c, g_lon4c = inject_circle_spoof(t_lat4c, t_lon4c)
+
+    # Resilient Navigation: đối chiếu chéo đa nguồn (multilateration/ADS-C + INS)
+    # phát hiện hình học "đường tròn" bất khả thi -> loại bỏ và khôi phục quỹ đạo thực
+    def resilient_recover(t_arr, g_arr):
+        r_arr = pd.Series(g_arr).rolling(window=9, center=True, min_periods=1).mean().values.copy()
+        r_arr[:SPOOF_START + 5] = t_arr[:SPOOF_START + 5]
+        r_arr[SPOOF_END - 5:] = t_arr[SPOOF_END - 5:]
+        return r_arr
+
+    r_lat4a = resilient_recover(t_lat4a, g_lat4a)
+    r_lon4a = resilient_recover(t_lon4a, g_lon4a)
+    r_lat4b = resilient_recover(t_lat4b, g_lat4b)
+    r_lon4b = resilient_recover(t_lon4b, g_lon4b)
+    r_lat4c = resilient_recover(t_lat4c, g_lat4c)
+    r_lon4c = resilient_recover(t_lon4c, g_lon4c)
+
+    # Sai số vị trí (so với quỹ đạo thực) — dùng để dựng KPI và biểu đồ
+    def calc_error(t_lat, t_lon, r_lat, r_lon):
+        mean_lat = (r_lat + t_lat) / 2
+        dlat_nm = (r_lat - t_lat) * 60
+        dlon_nm = (r_lon - t_lon) * 60 * np.cos(np.radians(mean_lat))
+        return np.sqrt(dlat_nm**2 + dlon_nm**2)
+
+    err_flight4a = calc_error(t_lat4a, t_lon4a, r_lat4a, r_lon4a)
+    err_flight4b = calc_error(t_lat4b, t_lon4b, r_lat4b, r_lon4b)
+    err_flight4c = calc_error(t_lat4c, t_lon4c, r_lat4c, r_lon4c)
+    error_array = (err_flight4a + err_flight4b + err_flight4c) / 3
+
+    # Sai số "thô" của GNSS bị spoof (dùng để mô phỏng bộ phát hiện Recall/FAR)
+    raw_err4a = calc_error(t_lat4a, t_lon4a, g_lat4a, g_lon4a)
+    raw_err4b = calc_error(t_lat4b, t_lon4b, g_lat4b, g_lon4b)
+    raw_err4c = calc_error(t_lat4c, t_lon4c, g_lat4c, g_lon4c)
+    raw_error_avg = (raw_err4a + raw_err4b + raw_err4c) / 3
+
+    # ── Mô phỏng bộ phát hiện Circle Spoofing: Recall / False Alarm Rate ──
+    DETECT_THRESHOLD_NM = 3.0
+    spoof_truth_mask = np.zeros(n_points, dtype=bool)
+    spoof_truth_mask[SPOOF_START:SPOOF_END] = True
+    detected_mask = raw_error_avg > DETECT_THRESHOLD_NM
+
+    TP = int(np.sum(detected_mask & spoof_truth_mask))
+    FN = int(np.sum(~detected_mask & spoof_truth_mask))
+    FP = int(np.sum(detected_mask & ~spoof_truth_mask))
+    TN = int(np.sum(~detected_mask & ~spoof_truth_mask))
+
+    recall_kb4 = (TP / (TP + FN)) if (TP + FN) > 0 else 0.0
+    far_kb4 = (FP / (FP + TN)) if (FP + TN) > 0 else 0.0
+
+    _detect_idx = np.argmax(detected_mask[SPOOF_START:]) + SPOOF_START if np.any(detected_mask[SPOOF_START:]) else SPOOF_END
+    time_to_alert_min = (_detect_idx - SPOOF_START) / n_points * 120  # quy đổi ra phút bay
+
+    # Animation Frames
+    for i in range(2, n_points):
+        frames.append(go.Frame(data=[
+            # Luồng A
+            go.Scattermapbox(lat=t_lat4a[:i], lon=t_lon4a[:i], mode='lines', line=dict(color='green', width=2)),
+            go.Scattermapbox(lat=g_lat4a[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
+                              lon=g_lon4a[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
+                              mode='lines+markers', marker=dict(size=3, color='red'), line=dict(color='red', width=1.5)),
+            go.Scattermapbox(lat=r_lat4a[:i], lon=r_lon4a[:i], mode='lines', line=dict(color='blue', width=2)),
+            # Luồng B
+            go.Scattermapbox(lat=t_lat4b[:i], lon=t_lon4b[:i], mode='lines', line=dict(color='darkgreen', width=2)),
+            go.Scattermapbox(lat=g_lat4b[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
+                              lon=g_lon4b[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
+                              mode='lines+markers', marker=dict(size=3, color='magenta'), line=dict(color='magenta', width=1.5)),
+            go.Scattermapbox(lat=r_lat4b[:i], lon=r_lon4b[:i], mode='lines', line=dict(color='dodgerblue', width=2)),
+            # Luồng C
+            go.Scattermapbox(lat=t_lat4c[:i], lon=t_lon4c[:i], mode='lines', line=dict(color='seagreen', width=2)),
+            go.Scattermapbox(lat=g_lat4c[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
+                              lon=g_lon4c[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
+                              mode='lines+markers', marker=dict(size=3, color='darkorange'), line=dict(color='darkorange', width=1.5)),
+            go.Scattermapbox(lat=r_lat4c[:i], lon=r_lon4c[:i], mode='lines', line=dict(color='cyan', width=2)),
+            # Vùng tấn công
+            go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(139,0,0,0.06)', line=dict(color='#8e0000', width=3)),
+        ], name=str(i)))
+
+    # Initial traces
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat4a[:2], lon=t_lon4a[:2], mode='lines', line=dict(color='green', width=2), name='Radar FL-A (VVTS→Trường Sa)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='lines+markers', marker=dict(size=3, color='red'), line=dict(color='red', width=1.5), name='Circle Spoofing FL-A'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat4a[:2], lon=r_lon4a[:2], mode='lines', line=dict(color='blue', width=2), name='Khôi phục (Multilateration) FL-A'))
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat4b[:2], lon=t_lon4b[:2], mode='lines', line=dict(color='darkgreen', width=2), name='Radar FL-B (Côn Đảo→Nam Trường Sa)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='lines+markers', marker=dict(size=3, color='magenta'), line=dict(color='magenta', width=1.5), name='Circle Spoofing FL-B'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat4b[:2], lon=r_lon4b[:2], mode='lines', line=dict(color='dodgerblue', width=2), name='Khôi phục (Multilateration) FL-B'))
+    fig_map.add_trace(go.Scattermapbox(lat=t_lat4c[:2], lon=t_lon4c[:2], mode='lines', line=dict(color='seagreen', width=2), name='Radar FL-C (Phú Quý→Giữa Trường Sa)'))
+    fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='lines+markers', marker=dict(size=3, color='darkorange'), line=dict(color='darkorange', width=1.5), name='Circle Spoofing FL-C'))
+    fig_map.add_trace(go.Scattermapbox(lat=r_lat4c[:2], lon=r_lon4c[:2], mode='lines', line=dict(color='cyan', width=2), name='Khôi phục (Multilateration) FL-C'))
+    fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(139,0,0,0.06)', line=dict(color='#8e0000', width=3), name='Vùng Tấn Công Circle Spoofing'))
+
+    status_text = "🎯 **ATC Response (Cấp 3 — Nghiêm trọng nhất):** Phát hiện nhiều tàu bay báo cáo GNSS di chuyển theo quỹ đạo hình tròn bất khả thi (dấu hiệu Circle Spoofing phối hợp) tại khu vực Nam FIR HCM/Trường Sa. Kích hoạt quy trình đối chiếu đa nguồn (ADS-C, multilateration, INS) và cảnh báo khẩn toàn vùng."
+
 # =====================================================
 # CẤU HÌNH CHUNG BẢN ĐỒ VÀ NÚT ANIMATION PLAY/PAUSE
 # =====================================================
 fig_map.frames = frames
+
+# Trung tâm/zoom bản đồ thích ứng theo từng kịch bản
+if "Kịch bản 4" in scenario:
+    _map_center = dict(lat=8.3, lon=111.5)
+    _map_zoom = 5.2
+else:
+    _map_center = dict(lat=5.5, lon=104.8)
+    _map_zoom = 4.2
+
 fig_map.update_layout(
     mapbox=dict(
         style="open-street-map",
-        center=dict(lat=5.5, lon=104.8),
-        zoom=4.2
+        center=_map_center,
+        zoom=_map_zoom
     ),
     margin=dict(l=0, r=0, t=0, b=0),
     height=680,
@@ -436,6 +595,15 @@ TIMELINE_DATA = {
         ("T+15:00", "#C8A800", "🟡 Ổn định",    "Duy trì dẫn đường bằng INS/DME và Radar. Luồng được kiểm soát ổn định ở mức giảm tải."),
         ("T+30:00", "#00A550", "🟢 Phục hồi",   "Nguồn nhiễu vô hiệu hóa. Hoạt động dẫn đường GNSS và năng lực khai thác vùng trời được khôi phục."),
     ],
+    "4": [
+        ("T+00:00", "#4A90E2", "🔵 Sự cố",      "3 tàu bay đồng thời báo cáo tọa độ GNSS di chuyển thành vòng tròn tại Nam FIR HCM/Trường Sa."),
+        ("T+02:00", "#D0021B", "🔴 Phát hiện",  "Hệ thống đối chiếu đa nguồn (ADS-C/Multilateration) nhận diện hình học tròn bất khả thi — nghi Circle Spoofing phối hợp."),
+        ("T+03:30", "#8e0000", "⚫ Xác nhận Cấp 3", "ACC HCM xác nhận tấn công phối hợp diện rộng, kích hoạt quy trình ứng phó nghiêm trọng nhất (Cấp 3)."),
+        ("T+05:00", "#D0021B", "🔴 Cảnh báo",   "Phát SIGMET/NOTAM khẩn, yêu cầu toàn bộ tàu bay trong vùng chuyển sang INS và báo cáo vị trí bằng thoại."),
+        ("T+08:00", "#E8A020", "🟠 Phối hợp",   "Phối hợp liên FIR (Singapore, Manila) và cơ quan chức năng xác định nguồn phát spoofing khu vực Trường Sa."),
+        ("T+15:00", "#C8A800", "🟡 Kiểm soát",  "Tăng phân cách, áp dụng thủ tục dự phòng phi-GNSS, giám sát chặt các luồng bay lân cận."),
+        ("T+35:00", "#00A550", "🟢 Phục hồi",   "Nguồn spoofing bị vô hiệu hóa/tàu bay thoát vùng ảnh hưởng. Khôi phục khai thác GNSS bình thường."),
+    ],
 }
 
 # ── Bảng so sánh hệ thống ─────────────────────────────────────────────
@@ -459,10 +627,22 @@ NAV_TABLE_DATA = {
         ("Radar PSR/SSR",  "⚠️", "±0.1 NM",         "#E8A020", "Năng lực Radar hạn chế khi nhiều luồng đồng thời"),
         ("ATFM / CTOT",    "✅",  "—",              "#00A550", "Giảm tải luồng từ sân khởi hành — phối hợp liên FIR"),
     ],
+    "4": [
+        ("GNSS / GPS",         "❌",  "Vòng tròn giả",   "#D0021B", "Circle Spoofing — quỹ đạo GNSS khép vòng bất khả thi"),
+        ("ADS-C / Multilateration", "✅", "±0.5-1 NM",  "#00A550", "Đối chiếu chéo đa nguồn để nhận diện dấu hiệu spoof"),
+        ("INS (Quán tính)",    "✅",  "±1-2.5 NM",      "#00A550", "Chuyển hoàn toàn sang dẫn đường quán tính khi nghi ngờ"),
+        ("DME/DME",             "⚠️", "Hạn chế phủ sóng","#E8A020", "Vùng biển xa — DME/Radar sơ cấp gần như không phủ"),
+        ("Radar PSR/SSR",      "⚠️", "Không phủ (oceanic)","#E8A020", "Không có radar sơ cấp — phụ thuộc ADS-B/ADS-C"),
+        ("Phối hợp liên FIR",  "✅",  "—",              "#00A550", "Cảnh báo khẩn cấp Cấp 3 tới các FIR lân cận (SIN, Manila)"),
+    ],
 }
 
 # Xác định kịch bản hiện tại
-sc_key = "1" if "Kịch bản 1" in scenario else ("2" if "Kịch bản 2" in scenario else "3")
+sc_key = (
+    "1" if "Kịch bản 1" in scenario else
+    ("2" if "Kịch bản 2" in scenario else
+     ("3" if "Kịch bản 3" in scenario else "4"))
+)
 timeline_items = TIMELINE_DATA[sc_key]
 nav_rows       = NAV_TABLE_DATA[sc_key]
 
@@ -548,104 +728,72 @@ with col2:
     components.html(full_html, height=720, scrolling=False)
 
 # =====================================================
-# ADVANCED RESILIENCE ANALYTICS
+# AIRSPACE CAPACITY IMPACT & CAPACITY LOSS (HIỂN THỊ SONG SONG)
 # =====================================================
-st.markdown("---")
+st.subheader("Airspace Capacity Analysis")
 
-max_error = float(np.max(error_array))
-mean_error = float(np.mean(error_array))
+# 1. Định nghĩa mức giảm năng lực thông lượng (capacity_loss) theo từng kịch bản
+sc_key = (
+    "1" if "Kịch bản 1" in scenario else
+    ("2" if "Kịch bản 2" in scenario else
+     ("3" if "Kịch bản 3" in scenario else "4"))
+)
 
 if sc_key == "1":
-    detection_time = "45 sec"
-    recovery_time = "12 min"
-    affected_aircraft = 1
     capacity_loss = 10
-    severity = "E NO SAFETY EFFECT - ADVISORY"
-    sev_color = "orange"
 elif sc_key == "2":
-    detection_time = "1 min"
-    recovery_time = "15 min"
-    affected_aircraft = 1
-    capacity_loss = 15
-    severity = "C SIGNIFICANT INCIDENT - CRITICAL"
-    sev_color = "red"
-else:
-    detection_time = "3 min"
-    recovery_time = "30 min"
-    affected_aircraft = 3
+    capacity_loss = 20
+elif sc_key == "3":
     capacity_loss = 40
-    severity = "B MAJOR INCIDENT - EMERGENCY"
-    sev_color = "darkred"
+else:  # Kịch bản 4
+    capacity_loss = 50
 
-st.subheader("GNSS Resilience KPI Dashboard")
-
-k1,k2,k3,k4,k5 = st.columns(5)
-
-k1.metric("Max Position Error", f"{max_error:.2f} NM")
-k2.metric("Mean Error", f"{mean_error:.2f} NM")
-k3.metric("Detection Time", detection_time)
-k4.metric("Affected Aircraft", affected_aircraft)
-k5.metric("Capacity Reduction", f"-{capacity_loss}%")
-
-#  ĐOẠN CODE MỚI THAY THẾ:
-# Quy đổi 100 điểm dữ liệu thành 120 phút bay thực tế
-time_axis = np.linspace(0, 120, len(error_array))
-
-fig_error = go.Figure()
-fig_error.add_trace(
-    go.Scatter(
-        x=time_axis,  #  Đã đổi sang trục thời gian tính bằng phút
-        y=error_array,
-        mode="lines",
-        name="Position Error",
-        line=dict(width=2.5)
-    )
-)
-
-fig_error.update_layout(
-    title="Position Error vs Time",
-    xaxis_title="Time (Minutes)",  #  Đổi nhãn thành Phút
-    yaxis_title="Error (NM)",
-    height=320,
-    xaxis=dict(ticksuffix=" min")  # Hiển thị thêm chữ "min" sau mỗi cột mốc thời gian (ví dụ: 20 min, 40 min)
-)
-st.plotly_chart(fig_error, use_container_width=True)
-
-st.markdown(
-    f'''
-    <div style="background:{sev_color};
-                color:white;
-                padding:15px;
-                border-radius:10px;
-                text-align:center;
-                font-size:24px;
-                font-weight:bold;">
-        ICAO SEVERITY LEVEL : {severity}
-    </div>
-    ''',
-    unsafe_allow_html=True
-)
-
-st.subheader("Airspace Capacity Impact")
-
+# Tính toán năng lực thông lượng hiện tại dựa trên capacity_loss
 normal_capacity = 60
-current_capacity = int(normal_capacity * (100 - capacity_loss)/100)
+current_capacity = int(normal_capacity * (100 - capacity_loss) / 100)
 
-fig_capacity = go.Figure(
-    go.Indicator(
-        mode="gauge+number",
-        value=current_capacity,
-        title={"text":"Aircraft / Hour"},
-        gauge={"axis":{"range":[0, normal_capacity]}}
+# 2. CHIA THÀNH 2 CỘT SONG SONG (Cột 1 chiếm tỷ lệ 1, Cột 2 chiếm tỷ lệ 2)
+col_loss, col_gauge = st.columns([1, 2])
+
+with col_loss:
+    st.markdown("<br><br>", unsafe_allow_html=True) # Tạo khoảng trống nhỏ để căn giữa theo chiều dọc
+    st.metric(
+        label="📉 Airspace Capacity Loss", 
+        value=f"-{capacity_loss}%",
+        delta="Hạn chế khai thác",
+        delta_color="inverse"
     )
-)
+    st.markdown(
+        f"<div style='background:#1e2130; padding:12px; border-radius:6px; border-left:4px solid #D0021B;'>"
+        f"<span style='font-size:12px; color:#aac4e0;'><b>Trạng thái:</b> Vùng trời bị giảm năng lực cấu trúc do nhiễu tín hiệu dẫn đường. Chuyển đổi phương thức phân cách dòng.</span>"
+        f"</div>", 
+        unsafe_allow_html=True
+    )
 
-fig_capacity.update_layout(height=320)
+with col_gauge:
+    # Dựng biểu đồ đồng hồ đo (Gauge Chart) hiển thị dung lượng vùng trời
+    fig_capacity = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=current_capacity,
+            title={"text": "Current Airspace Capacity (Aircraft / Hour)", "font": {"size": 14}},
+            gauge={
+                "axis": {"range": [0, normal_capacity]},
+                "bar": {"color": "#D0021B" if capacity_loss >= 40 else "#E8A020"},
+                "steps": [
+                    {"range": [0, 30], "color": "rgba(208, 2, 27, 0.1)"},
+                    {"range": [30, 50], "color": "rgba(232, 160, 32, 0.1)"},
+                    {"range": [50, 60], "color": "rgba(0, 165, 80, 0.1)"}
+                ]
+            }
+        )
+    )
+    fig_capacity.update_layout(height=280, margin=dict(t=30, b=10, l=10, r=10))
+    st.plotly_chart(fig_capacity, use_container_width=True)
 
-st.plotly_chart(fig_capacity, use_container_width=True)
-
+# Khởi tạo DataFrame mẫu (Giữ lại để tránh lỗi logic nếu các hàm sau có gọi tới)
 integrity_df = pd.DataFrame({
-    "lat":[8.5,6.0,3.5],
-    "lon":[105,105,105],
-    "integrity":[98,65,92]
+    "lat": [8.5, 6.0, 3.5],
+    "lon": [105, 105, 105],
+    "integrity": [98, 65, 92]
 })
