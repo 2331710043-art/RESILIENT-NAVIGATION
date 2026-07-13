@@ -31,6 +31,212 @@ scenario = st.sidebar.selectbox(
 n_points = 100  # Cố định độ phân giải quỹ đạo
 st.sidebar.markdown("---")
 
+show_non_resilient = st.sidebar.checkbox(
+    "🚫 So sánh: KHÔNG áp dụng Resilient Navigation",
+    value=False,
+    help=(
+        "Mô phỏng quỹ đạo THỰC TẾ của tàu bay nếu KHÔNG có INS/DME/Radar dự phòng "
+        "và KHÔNG có bộ lọc FDE/cross-check đa nguồn — tức là tổ lái/autopilot tin tưởng "
+        "hoàn toàn vào tín hiệu GNSS bị lỗi."
+    ),
+)
+
+# =====================================================
+# THUẬT TOÁN MÔ PHỎNG: TÀU BAY KHÔNG ÁP DỤNG RESILIENT NAVIGATION
+# =====================================================
+def mo_phong_khong_resilient(t_lat, t_lon, g_lat, g_lon, mode="jump",
+                              start_idx=0, end_idx=None, drift_step_deg=0.0006):
+    """
+    Mô phỏng quỹ đạo THỰC TẾ mà tàu bay sẽ bay nếu KHÔNG áp dụng Resilient
+    Navigation.
+    """
+    n = len(t_lat)
+    if end_idx is None:
+        end_idx = n
+    na_lat, na_lon = t_lat.copy(), t_lon.copy()
+
+    if mode == "jump":
+        na_lat[start_idx:end_idx] = 2 * t_lat[start_idx:end_idx] - g_lat[start_idx:end_idx]
+        na_lon[start_idx:end_idx] = 2 * t_lon[start_idx:end_idx] - g_lon[start_idx:end_idx]
+        # Sau khi thoát vùng ảnh hưởng, không có gì "kéo" tàu bay trở lại route ngay lập tức
+        if end_idx < n:
+            offset_lat = na_lat[end_idx - 1] - t_lat[end_idx - 1]
+            offset_lon = na_lon[end_idx - 1] - t_lon[end_idx - 1]
+            fade = np.linspace(1, 0, min(15, n - end_idx))
+            k = len(fade)
+            na_lat[end_idx:end_idx + k] = t_lat[end_idx:end_idx + k] + offset_lat * fade
+            na_lon[end_idx:end_idx + k] = t_lon[end_idx:end_idx + k] + offset_lon * fade
+
+    elif mode == "freeze":
+        # Mô phỏng dead-reckoning thuần túy cộng sai số tích lũy (random walk) khi mất GNSS hoàn toàn
+        for k in range(start_idx, end_idx):
+            na_lat[k] = na_lat[k-1] + np.random.normal(0, 0.0005)
+            na_lon[k] = na_lon[k-1] + np.random.normal(0, 0.0005)
+
+    elif mode == "circle":
+        # Máy bay tin hoàn toàn vào GNSS giả. Autopilot sẽ bám theo quỹ đạo hình tròn giả mạo.
+        alpha = 0.18
+        if start_idx > 0:
+            na_lat[start_idx-1] = t_lat[start_idx-1]
+            na_lon[start_idx-1] = t_lon[start_idx-1]
+
+        for k in range(start_idx, end_idx):
+            na_lat[k] = na_lat[k-1] + alpha * (g_lat[k] - na_lat[k-1])
+            na_lon[k] = na_lon[k-1] + alpha * (g_lon[k] - na_lon[k-1])
+
+        # Sau khi thoát vùng spoofing máy bay vẫn còn lệch
+        if end_idx < n:
+            offset_lat = na_lat[end_idx-1] - t_lat[end_idx-1]
+            offset_lon = na_lon[end_idx-1] - t_lon[end_idx-1]
+            
+            # Tính toán số phần tử còn lại thực tế để không bị tràn mảng
+            con_lai = n - end_idx
+            so_buoc_fade = min(20, con_lai)
+            
+            if so_buoc_fade > 0:
+                fade = np.linspace(1, 0, so_buoc_fade)
+                na_lat[end_idx:end_idx+so_buoc_fade] = t_lat[end_idx:end_idx+so_buoc_fade] + offset_lat * fade
+                na_lon[end_idx:end_idx+so_buoc_fade] = t_lon[end_idx:end_idx+so_buoc_fade] + offset_lon * fade
+
+    return na_lat, na_lon
+
+
+def tinh_sai_so_nm(t_lat, t_lon, x_lat, x_lon):
+    """Sai số khoảng cách (NM) giữa quỹ đạo x và quỹ đạo thực t."""
+    mean_lat = (x_lat + t_lat) / 2
+    dlat_nm = (x_lat - t_lat) * 60
+    dlon_nm = (x_lon - t_lon) * 60 * np.cos(np.radians(mean_lat))
+    return np.sqrt(dlat_nm ** 2 + dlon_nm ** 2)
+# =====================================================
+# LOI MO PHONG EKF-GRU CHO RESILIENT NAVIGATION
+# =====================================================
+def _sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-np.clip(x, -60, 60)))
+
+
+def _gru_anomaly_score(feature_vec, h_prev):
+    """
+    GRU surrogate nhe de chay truc tiep trong Streamlit ma khong can file model.
+    Input feature_vec = [innovation_nm, innovation_rate_nm, gnss_jump_nm].
+    Output score 0..1: cang cao cang nghi GNSS anomaly/spoofing.
+    """
+    x = np.asarray(feature_vec, dtype=float)
+    x = np.clip(x / np.array([8.0, 4.0, 8.0]), 0.0, 6.0)
+
+    wz = np.array([1.15, 0.65, 1.05])
+    wr = np.array([0.45, 0.25, 0.40])
+    wh = np.array([1.35, 0.95, 1.20])
+
+    z = _sigmoid(np.dot(wz, x) + 0.80 * h_prev - 2.20)
+    r = _sigmoid(np.dot(wr, x) + 0.35 * h_prev - 1.10)
+    h_candidate = np.tanh(np.dot(wh, x) + 0.65 * r * h_prev - 1.80)
+    h = (1.0 - z) * h_prev + z * h_candidate
+    score = float(_sigmoid(3.20 * h + 0.85 * x[0] + 0.55 * x[2] - 2.15))
+    return score, float(h)
+
+
+def _ekf_update(x, P, z, H, R):
+    y = z - H @ x
+    S = H @ P @ H.T + R
+    K = P @ H.T @ np.linalg.inv(S)
+    x = x + K @ y
+    P = (np.eye(len(x)) - K @ H) @ P
+    return x, P
+
+
+def mo_phong_ekf_gru_resilient(
+    t_lat,
+    t_lon,
+    g_lat,
+    g_lon,
+    gnss_available_mask=None,
+    alt_available_mask=None,
+    alt_sigma_deg=0.0045,
+    gru_threshold=0.58,
+):
+    """
+    Mo phong hybrid EKF-GRU:
+    - EKF du doan trang thai [lat, lon, v_lat, v_lon].
+    - GNSS measurement duoc kiem tra bang innovation + GRU anomaly score.
+    - Khi GNSS bi nghi ngo, EKF loai GNSS va cap nhat bang nguon doc lap gia lap
+      nhu DME/Radar/ADS-C voi nhieu do alt_sigma_deg.
+    """
+    n = len(t_lat)
+    if gnss_available_mask is None:
+        gnss_available_mask = np.ones(n, dtype=bool)
+    if alt_available_mask is None:
+        alt_available_mask = np.ones(n, dtype=bool)
+
+    # State: lat, lon, vlat, vlon. Van toc khoi tao tu hai diem dau cua route.
+    init_vlat = t_lat[1] - t_lat[0] if n > 1 else 0.0
+    init_vlon = t_lon[1] - t_lon[0] if n > 1 else 0.0
+    x = np.array([t_lat[0], t_lon[0], init_vlat, init_vlon], dtype=float)
+    P = np.diag([1e-5, 1e-5, 1e-6, 1e-6])
+
+    F = np.array([
+        [1.0, 0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    H_pos = np.array([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+    ])
+
+    Q = np.diag([2.0e-7, 2.0e-7, 7.0e-8, 7.0e-8])
+    R_gnss = np.diag([8.0e-5, 8.0e-5]) ** 2
+    R_alt = np.diag([alt_sigma_deg, alt_sigma_deg]) ** 2
+
+    r_lat = np.zeros(n)
+    r_lon = np.zeros(n)
+    scores = np.zeros(n)
+    trusted_gnss = np.zeros(n, dtype=bool)
+    h_gru = 0.0
+    prev_innovation_nm = 0.0
+    prev_gnss = np.array([g_lat[0], g_lon[0]], dtype=float)
+
+    for k in range(n):
+        if k > 0:
+            x = F @ x
+            P = F @ P @ F.T + Q
+
+        pred_pos = H_pos @ x
+        gnss_pos = np.array([g_lat[k], g_lon[k]], dtype=float)
+        mean_lat = (pred_pos[0] + gnss_pos[0]) / 2.0
+        innovation_nm = float(tinh_sai_so_nm(
+            np.array([pred_pos[0]]), np.array([pred_pos[1]]),
+            np.array([gnss_pos[0]]), np.array([gnss_pos[1]])
+        )[0])
+        gnss_jump_nm = float(tinh_sai_so_nm(
+            np.array([prev_gnss[0]]), np.array([prev_gnss[1]]),
+            np.array([gnss_pos[0]]), np.array([gnss_pos[1]])
+        )[0]) if k > 0 else 0.0
+        innovation_rate_nm = abs(innovation_nm - prev_innovation_nm)
+
+        score, h_gru = _gru_anomaly_score(
+            [innovation_nm, innovation_rate_nm, gnss_jump_nm], h_gru
+        )
+        scores[k] = score
+
+        if gnss_available_mask[k] and score < gru_threshold and innovation_nm < 5.0:
+            x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
+            trusted_gnss[k] = True
+        elif alt_available_mask[k]:
+            # Nguon doc lap gia lap: DME/Radar/ADS-C quanh vi tri thuc, co nhieu do rieng.
+            alt_pos = np.array([
+                t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
+                t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
+            ])
+            x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
+
+        r_lat[k], r_lon[k] = x[0], x[1]
+        prev_innovation_nm = innovation_nm
+        prev_gnss = gnss_pos
+
+    error_array = tinh_sai_so_nm(t_lat, t_lon, r_lat, r_lon)
+    return r_lat, r_lon, error_array, scores, trusted_gnss
+
 # ── Situational Awareness Panel (sidebar) ─────────────────────────────
 AWARENESS_DATA = {
     "Kịch bản 1": {
@@ -216,37 +422,48 @@ if "Kịch bản 1" in scenario:
     g_lat1[40:70] = t_lat1[39]
     g_lon1[40:70] = t_lon1[39]
 
-    # Resilient Navigation: INS/DME — giả lập drift tích lũy thực tế (tối đa ~2-3 NM)
-    r_lat1, r_lon1 = t_lat1.copy(), t_lon1.copy()
-    
-    # Tạo độ lệch drift mượt mà tăng dần theo thời gian thay vì random quá nặng
-    drift_profile = np.linspace(0, 0.03, 30) 
-    r_lat1[40:70] += drift_profile * 0.5
-    r_lon1[40:70] += drift_profile * 0.5
+    # Resilient Navigation: Hybrid EKF-GRU loại GNSS khi bị jamming và cập nhật bằng DME/Radar giả lập
+    gnss_mask1 = np.ones(n_points, dtype=bool)
+    gnss_mask1[40:70] = False
+    alt_mask1 = np.ones(n_points, dtype=bool)
+    r_lat1, r_lon1, error_array, anomaly_score1, trusted_gnss1 = mo_phong_ekf_gru_resilient(
+        t_lat1, t_lon1, g_lat1, g_lon1,
+        gnss_available_mask=gnss_mask1,
+        alt_available_mask=alt_mask1,
+        alt_sigma_deg=0.0040,
+        gru_threshold=0.58,
+    )
 
-    # ĐÃ SỬA: Tính sai số thực tế dựa trên hệ thống dự phòng INS (r_lat1) vs Thực tế (t_lat1)
-    error_array = np.zeros(n_points)
-    mean_lat_j = (r_lat1[40:70] + t_lat1[40:70]) / 2
-    dlat_nm_j = (r_lat1[40:70] - t_lat1[40:70]) * 60
-    dlon_nm_j = (r_lon1[40:70] - t_lon1[40:70]) * 60 * np.cos(np.radians(mean_lat_j))
-    
-    # Sai số tích lũy của INS sẽ chỉ rơi vào khoảng 0.5 - 2.5 NM (Rất chuẩn thực tế)
-    error_array[40:70] = np.sqrt(dlat_nm_j**2 + dlon_nm_j**2)
+    # ── KHÔNG áp dụng Resilient Navigation: dead-reckoning vòng hở, không INS/DME ──
+    na_lat1, na_lon1 = mo_phong_khong_resilient(
+        t_lat1, t_lon1, g_lat1, g_lon1, mode="freeze", start_idx=40, end_idx=70
+    )
+    non_res_error_array = tinh_sai_so_nm(t_lat1, t_lon1, na_lat1, na_lon1)
+    non_res_max_dev = float(np.max(non_res_error_array))
 
     # Animation Frames
     for i in range(2, n_points):
-        frames.append(go.Frame(data=[
+        _frame_data = [
             go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i], mode='lines', line=dict(color='green', width=3)),
             go.Scattermapbox(lat=g_lat1[:i], lon=g_lon1[:i], mode='markers+lines', marker=dict(size=4, color='orange')),
             go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i], mode='lines', line=dict(color='blue', width=4)),
             go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,165,0,0.06)', line=dict(color='orange', width=2)),
-        ], name=str(i)))
+        ]
+        if show_non_resilient:
+            _frame_data.append(go.Scattermapbox(lat=na_lat1[:i], lon=na_lon1[:i], mode='lines',
+                                                  line=dict(color='#ff003c', width=3)))
+        frames.append(go.Frame(data=_frame_data, name=str(i)))
 
     # Initial traces
     fig_map.add_trace(go.Scattermapbox(lat=t_lat1[:2], lon=t_lon1[:2], mode='lines', line=dict(color='green', width=3), name='Vết Radar PSR/SSR (Thực tế)'))
     fig_map.add_trace(go.Scattermapbox(lat=g_lat1[:2], lon=g_lon1[:2], mode='markers+lines', marker=dict(size=4, color='orange'), name='Tín hiệu Định vị GNSS (Bị đóng băng)'))
     fig_map.add_trace(go.Scattermapbox(lat=r_lat1[:2], lon=r_lon1[:2], mode='lines', line=dict(color='blue', width=4), name='Tích hợp Dự Phòng (INS/DME)'))
     fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,165,0,0.06)', line=dict(color='orange', width=2), name='Vùng Nhiễu GNSS Cục Bộ'))
+    if show_non_resilient:
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat1[:2], lon=na_lon1[:2], mode='lines',
+                                            line=dict(color='#ff003c', width=3),
+                                            name='⚠️ KHÔNG Resilient Nav (giả lập dead-reckoning)'))
+        st.sidebar.error(f"⚠️ Không Resilient Nav: lệch tối đa ≈ {non_res_max_dev:.1f} NM khỏi đường bay thật, không tự hiệu chỉnh.")
 
     status_text = "🟢 **ATC Response:** Hệ thống phát hiện mất tính toàn vẹn vệ tinh trên đường bay. Chuyển sang giám sát PSR/SSR và chế độ dự phòng INS/DME."
 
@@ -263,38 +480,47 @@ elif "Kịch bản 2" in scenario:
     g_lat1[40:70] += 0.45 * np.random.normal(size=30)
     g_lon1[40:70] += 0.45 * np.random.normal(size=30)
 
-    # Resilient Navigation: FDE (Fault Detection & Exclusion) — rolling average
-    # Làm mượt để loại bỏ các điểm nhảy (giả lập thuật toán lọc máy tính onboard)
-    r_lat1 = pd.Series(g_lat1).rolling(window=10, center=True, min_periods=1).mean().values.copy()
-    r_lon1 = pd.Series(g_lon1).rolling(window=10, center=True, min_periods=1).mean().values.copy()
-    # Ép các điểm từ 0 đến 35 (trước khi gặp nhiễu) bằng chuẩn tọa độ thực tế
-    r_lat1[:35] = t_lat1[:35]
-    r_lon1[:35] = t_lon1[:35]
+    # Resilient Navigation: Hybrid EKF-GRU phát hiện spoofing bằng chuỗi innovation
+    gnss_mask2 = np.ones(n_points, dtype=bool)
+    alt_mask2 = np.ones(n_points, dtype=bool)
+    r_lat1, r_lon1, error_array, anomaly_score2, trusted_gnss2 = mo_phong_ekf_gru_resilient(
+        t_lat1, t_lon1, g_lat1, g_lon1,
+        gnss_available_mask=gnss_mask2,
+        alt_available_mask=alt_mask2,
+        alt_sigma_deg=0.0035,
+        gru_threshold=0.55,
+    )
 
-    # Giả định sau điểm thứ 85 (hoặc 90 tùy n_points), hệ thống đã phục hồi hoàn toàn
-    r_lat1[85:] = t_lat1[85:]
-    r_lon1[85:] = t_lon1[85:]
-
-    # ĐÃ SỬA: Tính sai số của hệ thống sau khi ĐÃ KHÁNG NHIỄU (r_lat1) vs Thực tế (t_lat1)
-    mean_lat_s = (r_lat1 + t_lat1) / 2
-    dlat_nm_s = (r_lat1 - t_lat1) * 60
-    dlon_nm_s = (r_lon1 - t_lon1) * 60 * np.cos(np.radians(mean_lat_s))
-    error_array = np.sqrt(dlat_nm_s**2 + dlon_nm_s**2)
+    # ── KHÔNG áp dụng Resilient Navigation: autopilot tự lái theo GNSS giả mạo ──
+    na_lat1, na_lon1 = mo_phong_khong_resilient(
+        t_lat1, t_lon1, g_lat1, g_lon1, mode="jump", start_idx=40, end_idx=85
+    )
+    non_res_error_array = tinh_sai_so_nm(t_lat1, t_lon1, na_lat1, na_lon1)
+    non_res_max_dev = float(np.max(non_res_error_array))
 
     # Animation Frames
     for i in range(2, n_points):
-        frames.append(go.Frame(data=[
+        _frame_data = [
             go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i], mode='lines', line=dict(color='green', width=3)),
             go.Scattermapbox(lat=g_lat1[40:max(41, i)] if i > 40 else [None], lon=g_lon1[40:max(41, i)] if i > 40 else [None], mode='markers', marker=dict(size=5, color='red')),
             go.Scattermapbox(lat=r_lat1[:i], lon=r_lon1[:i], mode='lines', line=dict(color='blue', width=4)),
             go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.06)', line=dict(color='red', width=2)),
-        ], name=str(i)))
+        ]
+        if show_non_resilient:
+            _frame_data.append(go.Scattermapbox(lat=na_lat1[:i], lon=na_lon1[:i], mode='lines',
+                                                  line=dict(color='#ff003c', width=3)))
+        frames.append(go.Frame(data=_frame_data, name=str(i)))
 
     # Initial traces
     fig_map.add_trace(go.Scattermapbox(lat=t_lat1[:2], lon=t_lon1[:2], mode='lines', line=dict(color='green', width=3), name='Vết Radar PSR/SSR (Thực tế)'))
     fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='markers', marker=dict(size=5, color='red'), name='Tọa độ Giả mạo (Spoofing)'))
     fig_map.add_trace(go.Scattermapbox(lat=r_lat1[:2], lon=r_lon1[:2], mode='lines', line=dict(color='blue', width=4), name='Xử lý Kháng nhiễu FDE (INS/DME)'))
     fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.06)', line=dict(color='red', width=2), name='Vùng Tấn Công Giả Mạo'))
+    if show_non_resilient:
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat1[:2], lon=na_lon1[:2], mode='lines',
+                                            line=dict(color='#ff003c', width=3),
+                                            name='⚠️ KHÔNG Resilient Nav (autopilot lái theo GNSS giả)'))
+        st.sidebar.error(f"⚠️ Không Resilient Nav: tàu bay lệch thực tế tối đa ≈ {non_res_max_dev:.1f} NM khỏi route thật, có nguy cơ xâm nhập vùng cấm/mất phân cách.")
 
     status_text = "🚨 **ATC Response:** Phát hiện sai lệch lớn giữa vết Radar và báo cáo tọa độ ADS-B của tàu bay. Lập tức phát lệnh yêu cầu tổ lái cô lập máy thu GPS, chuyển sang khai thác INS thủ công."
 
@@ -306,66 +532,57 @@ elif "Kịch bản 3" in scenario:
     z_lat = [3.0, 3.0, 9.5, 9.5, 3.0]
     z_lon = [101.5, 107.5, 107.5, 101.5, 101.5]
 
-    def inject_spoof(true_arr):
-        """Tiêm nhiễu giả mạo vào đoạn giữa hành trình."""
-        res = true_arr.copy()
-        res[35:75] += 0.40 * np.random.normal(size=40)
-        return res
+    def inject_spoof_in_red_zone(true_lat, true_lon):
+        """Chỉ tiêm nhiễu GNSS tại các điểm nằm trong vùng chữ nhật màu đỏ."""
+        g_lat = true_lat.copy()
+        g_lon = true_lon.copy()
+        lat_min, lat_max = min(z_lat), max(z_lat)
+        lon_min, lon_max = min(z_lon), max(z_lon)
+        inside_zone = (
+            (true_lat >= lat_min) & (true_lat <= lat_max) &
+            (true_lon >= lon_min) & (true_lon <= lon_max)
+        )
+        n_inside = int(np.sum(inside_zone))
+        if n_inside > 0:
+            g_lat[inside_zone] += 0.40 * np.random.normal(size=n_inside)
+            g_lon[inside_zone] += 0.40 * np.random.normal(size=n_inside)
+        return g_lat, g_lon, inside_zone
 
-    # GNSS bị nhiễu (spoofed) cho cả 3 luồng
-    g_lat1, g_lon1 = inject_spoof(t_lat1), inject_spoof(t_lon1)
-    g_lat2, g_lon2 = inject_spoof(t_lat2), inject_spoof(t_lon2)
-    g_lat3, g_lon3 = inject_spoof(t_lat3), inject_spoof(t_lon3)
+    # GNSS chỉ bị nhiễu khi quỹ đạo đi vào vùng chữ nhật màu đỏ
+    g_lat1, g_lon1, zone_mask31 = inject_spoof_in_red_zone(t_lat1, t_lon1)
+    g_lat2, g_lon2, zone_mask32 = inject_spoof_in_red_zone(t_lat2, t_lon2)
+    g_lat3, g_lon3, zone_mask33 = inject_spoof_in_red_zone(t_lat3, t_lon3)
 
-    # Resilient Navigation: Bộ lọc hồi phục tọa độ cho cả 3 luồng bay
-    r_lat1 = pd.Series(g_lat1).rolling(window=15, center=True, min_periods=1).mean().values.copy()
-    r_lon1 = pd.Series(g_lon1).rolling(window=15, center=True, min_periods=1).mean().values.copy()
-    r_lat2 = pd.Series(g_lat2).rolling(window=15, center=True, min_periods=1).mean().values.copy()
-    r_lon2 = pd.Series(g_lon2).rolling(window=15, center=True, min_periods=1).mean().values.copy()
-    r_lat3 = pd.Series(g_lat3).rolling(window=15, center=True, min_periods=1).mean().values.copy()
-    r_lon3 = pd.Series(g_lon3).rolling(window=15, center=True, min_periods=1).mean().values.copy()
-  
-    # 2. SỬA LỖI BIÊN TẠI 0 PHÚT cho cả 3 luồng (Đặt ở đây)
-    r_lat1[:35] = t_lat1[:35]
-    r_lon1[:35] = t_lon1[:35]
-    r_lat2[:35] = t_lat2[:35]
-    r_lon2[:35] = t_lon2[:35]
-    r_lat3[:35] = t_lat3[:35]
-    r_lon3[:35] = t_lon3[:35]
-    
-    # Giả định sau điểm thứ 85 (hoặc 90 tùy n_points), hệ thống đã phục hồi hoàn toàn
-    r_lat1[85:] = t_lat1[85:]
-    r_lon1[85:] = t_lon1[85:]
-    r_lat2[85:] = t_lat2[85:]
-    r_lon2[85:] = t_lon2[85:]
-    r_lat3[85:] = t_lat3[85:]
-    r_lon3[85:] = t_lon3[85:]
+    # Resilient Navigation: mỗi luồng có một EKF cục bộ, GRU score giám sát anomaly theo thời gian
+    gnss_mask3 = np.ones(n_points, dtype=bool)
+    alt_mask3 = np.ones(n_points, dtype=bool)
+    r_lat1, r_lon1, err_flight1, anomaly_score31, trusted_gnss31 = mo_phong_ekf_gru_resilient(
+        t_lat1, t_lon1, g_lat1, g_lon1, gnss_mask3, alt_mask3, alt_sigma_deg=0.0045, gru_threshold=0.55
+    )
+    r_lat2, r_lon2, err_flight2, anomaly_score32, trusted_gnss32 = mo_phong_ekf_gru_resilient(
+        t_lat2, t_lon2, g_lat2, g_lon2, gnss_mask3, alt_mask3, alt_sigma_deg=0.0045, gru_threshold=0.55
+    )
+    r_lat3, r_lon3, err_flight3, anomaly_score33, trusted_gnss33 = mo_phong_ekf_gru_resilient(
+        t_lat3, t_lon3, g_lat3, g_lon3, gnss_mask3, alt_mask3, alt_sigma_deg=0.0045, gru_threshold=0.55
+    )
 
-
-# 1. Tính sai số cho Luồng 1 (SGN -> SIN)
-    mean_lat_a1 = (r_lat1 + t_lat1) / 2
-    dlat_nm_a1 = (r_lat1 - t_lat1) * 60
-    dlon_nm_a1 = (r_lon1 - t_lon1) * 60 * np.cos(np.radians(mean_lat_a1))
-    err_flight1 = np.sqrt(dlat_nm_a1**2 + dlon_nm_a1**2)
-
-    # 2. Tính sai số cho Luồng 2 (PNH -> KUL)
-    mean_lat_a2 = (r_lat2 + t_lat2) / 2
-    dlat_nm_a2 = (r_lat2 - t_lat2) * 60
-    dlon_nm_a2 = (r_lon2 - t_lon2) * 60 * np.cos(np.radians(mean_lat_a2))
-    err_flight2 = np.sqrt(dlat_nm_a2**2 + dlon_nm_a2**2)
-
-    # 3. Tính sai số cho Luồng 3 (BKK -> CGK)
-    mean_lat_a3 = (r_lat3 + t_lat3) / 2
-    dlat_nm_a3 = (r_lat3 - t_lat3) * 60
-    dlon_nm_a3 = (r_lon3 - t_lon3) * 60 * np.cos(np.radians(mean_lat_a3))
-    err_flight3 = np.sqrt(dlat_nm_a3**2 + dlon_nm_a3**2)
-
-    # ĐÃ SỬA: Tính sai số trung bình của toàn bộ không lưu trong vùng ảnh hưởng tại mỗi thời điểm
+    # Sai số trung bình của toàn bộ không lưu trong vùng ảnh hưởng tại mỗi thời điểm
     error_array = (err_flight1 + err_flight2 + err_flight3) / 3
+
+    # ── KHÔNG áp dụng Resilient Navigation: cả 3 luồng đều tự lái theo GNSS bị nhiễu ──
+    na_lat1, na_lon1 = mo_phong_khong_resilient(t_lat1, t_lon1, g_lat1, g_lon1, mode="jump", start_idx=35, end_idx=85)
+    na_lat2, na_lon2 = mo_phong_khong_resilient(t_lat2, t_lon2, g_lat2, g_lon2, mode="jump", start_idx=35, end_idx=85)
+    na_lat3, na_lon3 = mo_phong_khong_resilient(t_lat3, t_lon3, g_lat3, g_lon3, mode="jump", start_idx=35, end_idx=85)
+    non_res_error_array = (
+        tinh_sai_so_nm(t_lat1, t_lon1, na_lat1, na_lon1)
+        + tinh_sai_so_nm(t_lat2, t_lon2, na_lat2, na_lon2)
+        + tinh_sai_so_nm(t_lat3, t_lon3, na_lat3, na_lon3)
+    ) / 3
+    non_res_max_dev = float(np.max(non_res_error_array))
 
     # Animation Frames
     for i in range(2, n_points):
-        frames.append(go.Frame(data=[
+        _frame_data = [
             # FL1
             go.Scattermapbox(lat=t_lat1[:i], lon=t_lon1[:i], mode='lines', line=dict(color='green', width=2)),
             go.Scattermapbox(lat=g_lat1[35:max(36, i)] if i > 35 else [None], lon=g_lon1[35:max(36, i)] if i > 35 else [None], mode='markers', marker=dict(size=4, color='red')),
@@ -380,7 +597,12 @@ elif "Kịch bản 3" in scenario:
             go.Scattermapbox(lat=r_lat3[:i], lon=r_lon3[:i], mode='lines', line=dict(color='cyan', width=2)),
             # Vùng nhiễu
             go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.04)', line=dict(color='red', width=3)),
-        ], name=str(i)))
+        ]
+        if show_non_resilient:
+            _frame_data.append(go.Scattermapbox(lat=na_lat1[:i], lon=na_lon1[:i], mode='lines', line=dict(color='#ff003c', width=2)))
+            _frame_data.append(go.Scattermapbox(lat=na_lat2[:i], lon=na_lon2[:i], mode='lines', line=dict(color='#ff7a7a', width=2)))
+            _frame_data.append(go.Scattermapbox(lat=na_lat3[:i], lon=na_lon3[:i], mode='lines', line=dict(color='#b30000', width=2)))
+        frames.append(go.Frame(data=_frame_data, name=str(i)))
 
     # Initial traces
     fig_map.add_trace(go.Scattermapbox(lat=t_lat1[:2], lon=t_lon1[:2], mode='lines', line=dict(color='green', width=2), name='Radar FL1 (TSN→SIN)'))
@@ -393,6 +615,11 @@ elif "Kịch bản 3" in scenario:
     fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='markers', marker=dict(size=4, color='darkorange'), name='Nhiễu GNSS FL3'))
     fig_map.add_trace(go.Scattermapbox(lat=r_lat3[:2], lon=r_lon3[:2], mode='lines', line=dict(color='cyan', width=2), name='INS/DME FL3 (Resilient)'))
     fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(255,0,0,0.04)', line=dict(color='red', width=3), name='Vùng Can Thiệp Diện Rộng'))
+    if show_non_resilient:
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat1[:2], lon=na_lon1[:2], mode='lines', line=dict(color='#ff003c', width=2), name='⚠️ Không Resilient Nav — FL1'))
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat2[:2], lon=na_lon2[:2], mode='lines', line=dict(color='#ff7a7a', width=2), name='⚠️ Không Resilient Nav — FL2'))
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat3[:2], lon=na_lon3[:2], mode='lines', line=dict(color='#b30000', width=2), name='⚠️ Không Resilient Nav — FL3'))
+        st.sidebar.error(f"⚠️ Không Resilient Nav: sai số trung bình 3 luồng lên tới ≈ {non_res_max_dev:.1f} NM, nguy cơ mất phân cách liên luồng cao.")
 
     status_text = "🔥 **ATFM Response (Khẩn cấp):** Sự cố nhiễu diện rộng tác động lớn đến nhiều luồng không lưu quốc tế đồng thời. Kích hoạt giải pháp ATFM khẩn cấp..."
 
@@ -424,20 +651,18 @@ else:
     g_lat4b, g_lon4b = inject_circle_spoof(t_lat4b, t_lon4b)
     g_lat4c, g_lon4c = inject_circle_spoof(t_lat4c, t_lon4c)
 
-    # Resilient Navigation: đối chiếu chéo đa nguồn (multilateration/ADS-C + INS)
-    # phát hiện hình học "đường tròn" bất khả thi -> loại bỏ và khôi phục quỹ đạo thực
-    def resilient_recover(t_arr, g_arr):
-        r_arr = pd.Series(g_arr).rolling(window=9, center=True, min_periods=1).mean().values.copy()
-        r_arr[:SPOOF_START + 5] = t_arr[:SPOOF_START + 5]
-        r_arr[SPOOF_END - 5:] = t_arr[SPOOF_END - 5:]
-        return r_arr
-
-    r_lat4a = resilient_recover(t_lat4a, g_lat4a)
-    r_lon4a = resilient_recover(t_lon4a, g_lon4a)
-    r_lat4b = resilient_recover(t_lat4b, g_lat4b)
-    r_lon4b = resilient_recover(t_lon4b, g_lon4b)
-    r_lat4c = resilient_recover(t_lat4c, g_lat4c)
-    r_lon4c = resilient_recover(t_lon4c, g_lon4c)
+    # Resilient Navigation: EKF-GRU loại bỏ circle spoofing, dùng nguồn độc lập ADS-C/INS giả lập
+    gnss_mask4 = np.ones(n_points, dtype=bool)
+    alt_mask4 = np.ones(n_points, dtype=bool)
+    r_lat4a, r_lon4a, err_flight4a, anomaly_score4a, trusted_gnss4a = mo_phong_ekf_gru_resilient(
+        t_lat4a, t_lon4a, g_lat4a, g_lon4a, gnss_mask4, alt_mask4, alt_sigma_deg=0.0060, gru_threshold=0.52
+    )
+    r_lat4b, r_lon4b, err_flight4b, anomaly_score4b, trusted_gnss4b = mo_phong_ekf_gru_resilient(
+        t_lat4b, t_lon4b, g_lat4b, g_lon4b, gnss_mask4, alt_mask4, alt_sigma_deg=0.0060, gru_threshold=0.52
+    )
+    r_lat4c, r_lon4c, err_flight4c, anomaly_score4c, trusted_gnss4c = mo_phong_ekf_gru_resilient(
+        t_lat4c, t_lon4c, g_lat4c, g_lon4c, gnss_mask4, alt_mask4, alt_sigma_deg=0.0060, gru_threshold=0.52
+    )
 
     # Sai số vị trí (so với quỹ đạo thực) — dùng để dựng KPI và biểu đồ
     def calc_error(t_lat, t_lon, r_lat, r_lon):
@@ -445,10 +670,6 @@ else:
         dlat_nm = (r_lat - t_lat) * 60
         dlon_nm = (r_lon - t_lon) * 60 * np.cos(np.radians(mean_lat))
         return np.sqrt(dlat_nm**2 + dlon_nm**2)
-
-    err_flight4a = calc_error(t_lat4a, t_lon4a, r_lat4a, r_lon4a)
-    err_flight4b = calc_error(t_lat4b, t_lon4b, r_lat4b, r_lon4b)
-    err_flight4c = calc_error(t_lat4c, t_lon4c, r_lat4c, r_lon4c)
     error_array = (err_flight4a + err_flight4b + err_flight4c) / 3
 
     # Sai số "thô" của GNSS bị spoof (dùng để mô phỏng bộ phát hiện Recall/FAR)
@@ -474,9 +695,20 @@ else:
     _detect_idx = np.argmax(detected_mask[SPOOF_START:]) + SPOOF_START if np.any(detected_mask[SPOOF_START:]) else SPOOF_END
     time_to_alert_min = (_detect_idx - SPOOF_START) / n_points * 120  # quy đổi ra phút bay
 
+    # ── KHÔNG áp dụng Resilient Navigation: autopilot lái theo "vòng tròn" giả mạo ──
+    na_lat4a, na_lon4a = mo_phong_khong_resilient(t_lat4a, t_lon4a, g_lat4a, g_lon4a, mode="circle", start_idx=SPOOF_START, end_idx=SPOOF_END)
+    na_lat4b, na_lon4b = mo_phong_khong_resilient(t_lat4b, t_lon4b, g_lat4b, g_lon4b, mode="circle", start_idx=SPOOF_START, end_idx=SPOOF_END)
+    na_lat4c, na_lon4c = mo_phong_khong_resilient(t_lat4c, t_lon4c, g_lat4c, g_lon4c, mode="circle", start_idx=SPOOF_START, end_idx=SPOOF_END)
+    non_res_error_array = (
+        calc_error(t_lat4a, t_lon4a, na_lat4a, na_lon4a)
+        + calc_error(t_lat4b, t_lon4b, na_lat4b, na_lon4b)
+        + calc_error(t_lat4c, t_lon4c, na_lat4c, na_lon4c)
+    ) / 3
+    non_res_max_dev = float(np.max(non_res_error_array))
+
     # Animation Frames
     for i in range(2, n_points):
-        frames.append(go.Frame(data=[
+        _frame_data = [
             # Luồng A
             go.Scattermapbox(lat=t_lat4a[:i], lon=t_lon4a[:i], mode='lines', line=dict(color='green', width=2)),
             go.Scattermapbox(lat=g_lat4a[SPOOF_START:max(SPOOF_START + 1, i)] if i > SPOOF_START else [None],
@@ -497,7 +729,12 @@ else:
             go.Scattermapbox(lat=r_lat4c[:i], lon=r_lon4c[:i], mode='lines', line=dict(color='cyan', width=2)),
             # Vùng tấn công
             go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(139,0,0,0.06)', line=dict(color='#8e0000', width=3)),
-        ], name=str(i)))
+        ]
+        if show_non_resilient:
+            _frame_data.append(go.Scattermapbox(lat=na_lat4a[:i], lon=na_lon4a[:i], mode='lines', line=dict(color='#ff003c', width=2)))
+            _frame_data.append(go.Scattermapbox(lat=na_lat4b[:i], lon=na_lon4b[:i], mode='lines', line=dict(color='#ff7a7a', width=2)))
+            _frame_data.append(go.Scattermapbox(lat=na_lat4c[:i], lon=na_lon4c[:i], mode='lines', line=dict(color='#b30000', width=2)))
+        frames.append(go.Frame(data=_frame_data, name=str(i)))
 
     # Initial traces
     fig_map.add_trace(go.Scattermapbox(lat=t_lat4a[:2], lon=t_lon4a[:2], mode='lines', line=dict(color='green', width=2), name='Radar FL-A (VVTS→Trường Sa)'))
@@ -510,6 +747,11 @@ else:
     fig_map.add_trace(go.Scattermapbox(lat=[None], lon=[None], mode='lines+markers', marker=dict(size=3, color='darkorange'), line=dict(color='darkorange', width=1.5), name='Circle Spoofing FL-C'))
     fig_map.add_trace(go.Scattermapbox(lat=r_lat4c[:2], lon=r_lon4c[:2], mode='lines', line=dict(color='cyan', width=2), name='Khôi phục (Multilateration) FL-C'))
     fig_map.add_trace(go.Scattermapbox(lat=z_lat, lon=z_lon, mode='lines', fill='toself', fillcolor='rgba(139,0,0,0.06)', line=dict(color='#8e0000', width=3), name='Vùng Tấn Công Circle Spoofing'))
+    if show_non_resilient:
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat4a[:2], lon=na_lon4a[:2], mode='lines', line=dict(color='#ff003c', width=2), name='⚠️ Không Resilient Nav — FL-A'))
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat4b[:2], lon=na_lon4b[:2], mode='lines', line=dict(color='#ff7a7a', width=2), name='⚠️ Không Resilient Nav — FL-B'))
+        fig_map.add_trace(go.Scattermapbox(lat=na_lat4c[:2], lon=na_lon4c[:2], mode='lines', line=dict(color='#b30000', width=2), name='⚠️ Không Resilient Nav — FL-C'))
+        st.sidebar.error(f"⚠️ Không Resilient Nav: tàu bay thực sự lái theo vòng tròn giả, lệch trung bình ≈ {non_res_max_dev:.1f} NM — nguy cơ va chạm/xâm nhập vùng biển tranh chấp cực cao.")
 
     status_text = "🎯 **ATC Response (Cấp 3 — Nghiêm trọng nhất):** Phát hiện nhiều tàu bay báo cáo GNSS di chuyển theo quỹ đạo hình tròn bất khả thi (dấu hiệu Circle Spoofing phối hợp) tại khu vực Nam FIR HCM/Trường Sa. Kích hoạt quy trình đối chiếu đa nguồn (ADS-C, multilateration, INS) và cảnh báo khẩn toàn vùng."
 
@@ -646,6 +888,15 @@ sc_key = (
 timeline_items = TIMELINE_DATA[sc_key]
 nav_rows       = NAV_TABLE_DATA[sc_key]
 
+# =====================================================
+# TOM TAT KPI EKF-GRU
+# =====================================================
+max_error_nm = float(np.max(error_array)) if "error_array" in globals() else 0.0
+mean_error_nm = float(np.mean(error_array)) if "error_array" in globals() else 0.0
+st.info(
+    f"EKF-GRU Fusion đang hoạt động | Sai số max: {max_error_nm:.2f} NM | "
+    f"Sai số TB: {mean_error_nm:.2f} NM | GNSS được kiểm tra bằng innovation + GRU anomaly score"
+)
 # =====================================================
 # BỐ CỤC HIỂN THỊ CHÍNH: BẢN ĐỒ (trái) + PANEL (phải)
 # =====================================================
@@ -791,6 +1042,111 @@ with col_gauge:
     fig_capacity.update_layout(height=280, margin=dict(t=30, b=10, l=10, r=10))
     st.plotly_chart(fig_capacity, use_container_width=True)
 
+
+# =====================================================
+# SIMULATION KPI SUMMARY
+# =====================================================
+st.subheader("Simulation KPIs")
+
+def _safe_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+def _collect_prefixed_arrays(prefix):
+    arrays = []
+    for name, value in globals().items():
+        if name.startswith(prefix):
+            arr = np.asarray(value)
+            if arr.ndim == 1 and len(arr) == n_points:
+                arrays.append(arr)
+    return arrays
+
+ekf_error = np.asarray(error_array) if "error_array" in globals() else np.zeros(n_points)
+non_res_error = np.asarray(non_res_error_array) if "non_res_error_array" in globals() else np.zeros(n_points)
+
+anomaly_arrays = _collect_prefixed_arrays("anomaly_score")
+if anomaly_arrays:
+    anomaly_series = np.mean([arr.astype(float) for arr in anomaly_arrays], axis=0)
+else:
+    anomaly_series = np.zeros(n_points)
+
+trusted_arrays = _collect_prefixed_arrays("trusted_gnss")
+if trusted_arrays:
+    trusted_series = np.mean([arr.astype(float) for arr in trusted_arrays], axis=0)
+else:
+    trusted_series = np.zeros(n_points)
+
+alert_threshold = 0.58
+alert_indices = np.where(anomaly_series >= alert_threshold)[0]
+time_to_alert_steps = None if len(alert_indices) == 0 else int(alert_indices[0])
+gnss_rejected_steps = int(np.sum(trusted_series < 0.5))
+
+nav_kpi_df = pd.DataFrame([
+    ("error_array", "Sai số EKF-GRU theo từng bước", f"{len(ekf_error)} bước"),
+    ("max_error_nm", "Sai số EKF-GRU lớn nhất", f"{np.max(ekf_error):.2f} NM"),
+    ("mean_error_nm", "Sai số EKF-GRU trung bình", f"{np.mean(ekf_error):.2f} NM"),
+    ("non_res_error_array", "Sai số nếu không áp dụng Resilient Navigation", f"{len(non_res_error)} bước"),
+    ("non_res_max_dev", "Độ lệch lớn nhất của phương án không resilient", f"{_safe_float(globals().get('non_res_max_dev')):.2f} NM"),
+], columns=["Chỉ số", "Ý nghĩa", "Giá trị"])
+
+ekf_gru_kpi_df = pd.DataFrame([
+    ("max anomaly score", "Điểm nghi ngờ GNSS lớn nhất", f"{np.max(anomaly_series):.2f}"),
+    ("mean anomaly score", "Điểm nghi ngờ GNSS trung bình", f"{np.mean(anomaly_series):.2f}"),
+    ("GNSS trusted rate", "Tỷ lệ bước GNSS được EKF tin dùng", f"{np.mean(trusted_series) * 100:.1f}%"),
+    ("time to alert", "Bước mô phỏng đầu tiên vượt ngưỡng cảnh báo", "Không kích hoạt" if time_to_alert_steps is None else f"T+{time_to_alert_steps} bước"),
+    ("GNSS rejected steps", "Số bước GNSS bị loại hoặc không được tin dùng", f"{gnss_rejected_steps}/{n_points}"),
+], columns=["Chỉ số", "Ý nghĩa", "Giá trị"])
+
+capacity_kpi_df = pd.DataFrame([
+    ("capacity_loss", "Phần trăm suy giảm năng lực vùng trời", f"{capacity_loss}%"),
+    ("normal_capacity", "Năng lực bình thường", f"{normal_capacity} aircraft/hour"),
+    ("current_capacity", "Năng lực còn lại sau sự cố", f"{current_capacity} aircraft/hour"),
+], columns=["Chỉ số", "Ý nghĩa", "Giá trị"])
+
+kpi_tab1, kpi_tab2, kpi_tab3, kpi_tab4 = st.tabs([
+    "Sai số dẫn đường",
+    "EKF-GRU",
+    "Spoofing KB4",
+    "Năng lực vùng trời",
+])
+
+with kpi_tab1:
+    st.dataframe(nav_kpi_df, use_container_width=True, hide_index=True)
+    fig_error = go.Figure()
+    fig_error.add_trace(go.Scatter(x=list(range(len(ekf_error))), y=ekf_error, mode="lines", name="EKF-GRU error", line=dict(color="#1f77b4", width=2)))
+    fig_error.add_trace(go.Scatter(x=list(range(len(non_res_error))), y=non_res_error, mode="lines", name="Không resilient", line=dict(color="#D0021B", width=2)))
+    fig_error.update_layout(height=280, margin=dict(l=20, r=20, t=30, b=20), xaxis_title="Bước mô phỏng", yaxis_title="Sai số (NM)")
+    st.plotly_chart(fig_error, use_container_width=True)
+
+with kpi_tab2:
+    st.dataframe(ekf_gru_kpi_df, use_container_width=True, hide_index=True)
+    fig_anomaly = go.Figure()
+    fig_anomaly.add_trace(go.Scatter(x=list(range(len(anomaly_series))), y=anomaly_series, mode="lines", name="GRU anomaly score", line=dict(color="#E8A020", width=2)))
+    fig_anomaly.add_hline(y=alert_threshold, line_dash="dash", line_color="#D0021B", annotation_text="Alert threshold")
+    fig_anomaly.update_layout(height=280, margin=dict(l=20, r=20, t=30, b=20), xaxis_title="Bước mô phỏng", yaxis_title="Anomaly score", yaxis=dict(range=[0, 1]))
+    st.plotly_chart(fig_anomaly, use_container_width=True)
+
+with kpi_tab3:
+    if sc_key == "4" and all(name in globals() for name in ["TP", "FN", "FP", "TN", "recall_kb4", "far_kb4", "time_to_alert_min"]):
+        spoof_kpi_df = pd.DataFrame([
+            ("TP", "Phát hiện đúng spoofing", int(TP)),
+            ("FN", "Bỏ sót spoofing", int(FN)),
+            ("FP", "Cảnh báo sai", int(FP)),
+            ("TN", "Nhận đúng trạng thái bình thường", int(TN)),
+            ("recall_kb4", "Tỷ lệ phát hiện đúng", f"{recall_kb4 * 100:.1f}%"),
+            ("far_kb4", "Tỷ lệ cảnh báo sai", f"{far_kb4 * 100:.1f}%"),
+            ("time_to_alert_min", "Thời gian phát cảnh báo", f"{time_to_alert_min:.1f} phút"),
+        ], columns=["Chỉ số", "Ý nghĩa", "Giá trị"])
+        st.dataframe(spoof_kpi_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Các chỉ số TP/FN/FP/TN chỉ được tính trong Kịch bản 4 - Circle Spoofing.")
+
+with kpi_tab4:
+    st.dataframe(capacity_kpi_df, use_container_width=True, hide_index=True)
 # Khởi tạo DataFrame mẫu (Giữ lại để tránh lỗi logic nếu các hàm sau có gọi tới)
 integrity_df = pd.DataFrame({
     "lat": [8.5, 6.0, 3.5],
