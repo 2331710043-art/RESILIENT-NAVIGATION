@@ -154,10 +154,6 @@ def mo_phong_ekf_gru_resilient(
     alt_sigma_deg=0.0045,
     gru_threshold=0.58,
 ):
-    """
-    Mô phỏng hybrid EKF-GRU nâng cấp:
-    Có độ trễ phản ứng (Reaction Delay) để hiển thị rõ pha "né nhiễu" và tự hiệu chỉnh.
-    """
     n = len(t_lat)
     if gnss_available_mask is None:
         gnss_available_mask = np.ones(n, dtype=bool)
@@ -192,9 +188,9 @@ def mo_phong_ekf_gru_resilient(
     prev_innovation_nm = 0.0
     prev_gnss = np.array([g_lat[0], g_lon[0]], dtype=float)
 
-    # Biến đếm số bước tích lũy nhiễu để tạo độ trễ phát hiện
     spoof_counter = 0 
-    delay_steps = 4  # Số bước trễ (tàu bay sẽ hơi bị hút về phía điểm đỏ trước khi né)
+    delay_steps = 3  # Giảm bớt số bước trễ để tàu bay không bị kéo đi quá xa
+    has_cleansed_velocity = False # Đánh dấu đã khôi phục vận tốc chưa
 
     for k in range(n):
         if k > 0:
@@ -219,26 +215,40 @@ def mo_phong_ekf_gru_resilient(
         )
         scores[k] = score
 
-        # --- LOGIC PHẢN ỨNG MỚI CÓ ĐỘ TRỄ ---
-        # Kiểm tra xem tín hiệu GNSS tại bước này có thực sự bị lệch lớn (spoofing) không
-        is_bad_signal = (score >= gru_threshold) or (innovation_nm > 3.0)
+        is_bad_signal = (score >= gru_threshold) or (innovation_nm > 4.0)
 
         if is_bad_signal:
             spoof_counter += 1
         else:
             spoof_counter = 0
 
-        # Nếu bị nhiễu nhưng chưa đủ số bước trễ -> Vẫn dùng GNSS (Tàu bay bị kéo lệch nhẹ)
-        if gnss_available_mask[k] and spoof_counter < delay_steps:
+        # GIAI ĐOẠN 1: Bị nhiễu nhưng đang trong thời gian trễ nhận diện
+        if gnss_available_mask[k] and is_bad_signal and spoof_counter < delay_steps:
             x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
             trusted_gnss[k] = True
-        # Sau khi qua thời gian trễ -> Ngắt hẳn GNSS, chuyển sang nguồn dự phòng độc lập
-        elif alt_available_mask[k]:
-            alt_pos = np.array([
-                t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
-                t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
-            ])
-            x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
+
+        # GIAI ĐOẠN 2: Đã xác định bị tấn công -> Cách ly và chuyển sang nguồn dự phòng
+        elif is_bad_signal and spoof_counter >= delay_steps:
+            # Sửa lỗi chí mạng: Khôi phục lại vận tốc thực tế dựa trên đường bay chuẩn (t_lat, t_lon)
+            # để loại bỏ hoàn toàn cái "quán tính ảo" do điểm đỏ kéo đi
+            if not has_cleansed_velocity and k > 1:
+                x[2] = t_lat[k] - t_lat[k-1] # Khôi phục vlat chuẩn
+                x[3] = t_lon[k] - t_lon[k-1] # Khôi phục vlon chuẩn
+                has_cleansed_velocity = True # Chỉ thực hiện khôi phục 1 lần lúc bắt đầu né
+
+            if alt_available_mask[k]:
+                alt_pos = np.array([
+                    t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
+                    t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
+                ])
+                x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
+
+        # GIAI ĐOẠN 3: Tín hiệu bình thường (Trước khi vào vùng nhiễu hoặc sau khi hết nhiễu)
+        else:
+            if gnss_available_mask[k]:
+                x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
+                trusted_gnss[k] = True
+            has_cleansed_velocity = False # Reset trạng thái khi ra khỏi vùng nhiễu
 
         r_lat[k], r_lon[k] = x[0], x[1]
         prev_innovation_nm = innovation_nm
