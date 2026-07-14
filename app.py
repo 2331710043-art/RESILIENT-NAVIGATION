@@ -154,12 +154,20 @@ def mo_phong_ekf_gru_resilient(
     alt_sigma_deg=0.0045,
     gru_threshold=0.58,
 ):
+    """
+    Mo phong hybrid EKF-GRU:
+    - EKF du doan trang thai [lat, lon, v_lat, v_lon].
+    - GNSS measurement duoc kiem tra bang innovation + GRU anomaly score.
+    - Khi GNSS bi nghi ngo, EKF loai GNSS va cap nhat bang nguon doc lap gia lap
+      nhu DME/Radar/ADS-C voi nhieu do alt_sigma_deg.
+    """
     n = len(t_lat)
     if gnss_available_mask is None:
         gnss_available_mask = np.ones(n, dtype=bool)
     if alt_available_mask is None:
         alt_available_mask = np.ones(n, dtype=bool)
 
+    # State: lat, lon, vlat, vlon. Van toc khoi tao tu hai diem dau cua route.
     init_vlat = t_lat[1] - t_lat[0] if n > 1 else 0.0
     init_vlon = t_lon[1] - t_lon[0] if n > 1 else 0.0
     x = np.array([t_lat[0], t_lon[0], init_vlat, init_vlon], dtype=float)
@@ -188,10 +196,6 @@ def mo_phong_ekf_gru_resilient(
     prev_innovation_nm = 0.0
     prev_gnss = np.array([g_lat[0], g_lon[0]], dtype=float)
 
-    spoof_counter = 0 
-    delay_steps = 3  # Giảm bớt số bước trễ để tàu bay không bị kéo đi quá xa
-    has_cleansed_velocity = False # Đánh dấu đã khôi phục vận tốc chưa
-
     for k in range(n):
         if k > 0:
             x = F @ x
@@ -199,7 +203,7 @@ def mo_phong_ekf_gru_resilient(
 
         pred_pos = H_pos @ x
         gnss_pos = np.array([g_lat[k], g_lon[k]], dtype=float)
-        
+        mean_lat = (pred_pos[0] + gnss_pos[0]) / 2.0
         innovation_nm = float(tinh_sai_so_nm(
             np.array([pred_pos[0]]), np.array([pred_pos[1]]),
             np.array([gnss_pos[0]]), np.array([gnss_pos[1]])
@@ -215,40 +219,16 @@ def mo_phong_ekf_gru_resilient(
         )
         scores[k] = score
 
-        is_bad_signal = (score >= gru_threshold) or (innovation_nm > 4.0)
-
-        if is_bad_signal:
-            spoof_counter += 1
-        else:
-            spoof_counter = 0
-
-        # GIAI ĐOẠN 1: Bị nhiễu nhưng đang trong thời gian trễ nhận diện
-        if gnss_available_mask[k] and is_bad_signal and spoof_counter < delay_steps:
+        if gnss_available_mask[k] and score < gru_threshold and innovation_nm < 5.0:
             x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
             trusted_gnss[k] = True
-
-        # GIAI ĐOẠN 2: Đã xác định bị tấn công -> Cách ly và chuyển sang nguồn dự phòng
-        elif is_bad_signal and spoof_counter >= delay_steps:
-            # Sửa lỗi chí mạng: Khôi phục lại vận tốc thực tế dựa trên đường bay chuẩn (t_lat, t_lon)
-            # để loại bỏ hoàn toàn cái "quán tính ảo" do điểm đỏ kéo đi
-            if not has_cleansed_velocity and k > 1:
-                x[2] = t_lat[k] - t_lat[k-1] # Khôi phục vlat chuẩn
-                x[3] = t_lon[k] - t_lon[k-1] # Khôi phục vlon chuẩn
-                has_cleansed_velocity = True # Chỉ thực hiện khôi phục 1 lần lúc bắt đầu né
-
-            if alt_available_mask[k]:
-                alt_pos = np.array([
-                    t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
-                    t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
-                ])
-                x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
-
-        # GIAI ĐOẠN 3: Tín hiệu bình thường (Trước khi vào vùng nhiễu hoặc sau khi hết nhiễu)
-        else:
-            if gnss_available_mask[k]:
-                x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
-                trusted_gnss[k] = True
-            has_cleansed_velocity = False # Reset trạng thái khi ra khỏi vùng nhiễu
+        elif alt_available_mask[k]:
+            # Nguon doc lap gia lap: DME/Radar/ADS-C quanh vi tri thuc, co nhieu do rieng.
+            alt_pos = np.array([
+                t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
+                t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
+            ])
+            x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
 
         r_lat[k], r_lon[k] = x[0], x[1]
         prev_innovation_nm = innovation_nm
@@ -293,7 +273,7 @@ AWARENESS_DATA = {
         ],
     },
     "Kịch bản 4": {
-        "aircraft":    "3+ tàu bay",
+        "aircraft":    "3 tàu bay",
         "notam":       "CRITICAL",
         "notam_color": "#D0021B",
         "systems": [
