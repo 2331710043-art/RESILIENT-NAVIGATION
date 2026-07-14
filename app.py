@@ -1086,19 +1086,15 @@ time_to_alert_steps = None if len(alert_indices) == 0 else int(alert_indices[0])
 gnss_rejected_steps = int(np.sum(trusted_series < 0.5))
 
 nav_kpi_df = pd.DataFrame([
-    ("error_array", "Sai số EKF-GRU theo từng bước", f"{len(ekf_error)} bước"),
     ("max_error_nm", "Sai số EKF-GRU lớn nhất", f"{np.max(ekf_error):.2f} NM"),
     ("mean_error_nm", "Sai số EKF-GRU trung bình", f"{np.mean(ekf_error):.2f} NM"),
-    ("non_res_error_array", "Sai số nếu không áp dụng Resilient Navigation", f"{len(non_res_error)} bước"),
     ("non_res_max_dev", "Độ lệch lớn nhất của phương án không resilient", f"{_safe_float(globals().get('non_res_max_dev')):.2f} NM"),
 ], columns=["Chỉ số", "Ý nghĩa", "Giá trị"])
 
 ekf_gru_kpi_df = pd.DataFrame([
     ("max anomaly score", "Điểm nghi ngờ GNSS lớn nhất", f"{np.max(anomaly_series):.2f}"),
     ("mean anomaly score", "Điểm nghi ngờ GNSS trung bình", f"{np.mean(anomaly_series):.2f}"),
-    ("GNSS trusted rate", "Tỷ lệ bước GNSS được EKF tin dùng", f"{np.mean(trusted_series) * 100:.1f}%"),
-    ("time to alert", "Bước mô phỏng đầu tiên vượt ngưỡng cảnh báo", "Không kích hoạt" if time_to_alert_steps is None else f"T+{time_to_alert_steps} bước"),
-    ("GNSS rejected steps", "Số bước GNSS bị loại hoặc không được tin dùng", f"{gnss_rejected_steps}/{n_points}"),
+    ("GNSS trusted rate", "Tỷ lệ GNSS được EKF tin dùng", f"{np.mean(trusted_series) * 100:.1f}%"),
 ], columns=["Chỉ số", "Ý nghĩa", "Giá trị"])
 
 capacity_kpi_df = pd.DataFrame([
