@@ -155,11 +155,8 @@ def mo_phong_ekf_gru_resilient(
     gru_threshold=0.58,
 ):
     """
-    Mo phong hybrid EKF-GRU:
-    - EKF du doan trang thai [lat, lon, v_lat, v_lon].
-    - GNSS measurement duoc kiem tra bang innovation + GRU anomaly score.
-    - Khi GNSS bi nghi ngo, EKF loai GNSS va cap nhat bang nguon doc lap gia lap
-      nhu DME/Radar/ADS-C voi nhieu do alt_sigma_deg.
+    Mô phỏng hybrid EKF-GRU nâng cấp:
+    Có độ trễ phản ứng (Reaction Delay) để hiển thị rõ pha "né nhiễu" và tự hiệu chỉnh.
     """
     n = len(t_lat)
     if gnss_available_mask is None:
@@ -167,7 +164,6 @@ def mo_phong_ekf_gru_resilient(
     if alt_available_mask is None:
         alt_available_mask = np.ones(n, dtype=bool)
 
-    # State: lat, lon, vlat, vlon. Van toc khoi tao tu hai diem dau cua route.
     init_vlat = t_lat[1] - t_lat[0] if n > 1 else 0.0
     init_vlon = t_lon[1] - t_lon[0] if n > 1 else 0.0
     x = np.array([t_lat[0], t_lon[0], init_vlat, init_vlon], dtype=float)
@@ -196,6 +192,10 @@ def mo_phong_ekf_gru_resilient(
     prev_innovation_nm = 0.0
     prev_gnss = np.array([g_lat[0], g_lon[0]], dtype=float)
 
+    # Biến đếm số bước tích lũy nhiễu để tạo độ trễ phát hiện
+    spoof_counter = 0 
+    delay_steps = 4  # Số bước trễ (tàu bay sẽ hơi bị hút về phía điểm đỏ trước khi né)
+
     for k in range(n):
         if k > 0:
             x = F @ x
@@ -203,7 +203,7 @@ def mo_phong_ekf_gru_resilient(
 
         pred_pos = H_pos @ x
         gnss_pos = np.array([g_lat[k], g_lon[k]], dtype=float)
-        mean_lat = (pred_pos[0] + gnss_pos[0]) / 2.0
+        
         innovation_nm = float(tinh_sai_so_nm(
             np.array([pred_pos[0]]), np.array([pred_pos[1]]),
             np.array([gnss_pos[0]]), np.array([gnss_pos[1]])
@@ -219,29 +219,26 @@ def mo_phong_ekf_gru_resilient(
         )
         scores[k] = score
 
-        # Giả lập: Cần ít nhất 4 bước nằm trong vùng nhiễu để GRU/FDE xác nhận và phản ứng
-        if gnss_available_mask[k]:
-            # Đếm số bước liên tiếp bị nhiễu nặng (> 3.0 NM) tính đến hiện tại
-            is_currently_spoofed = (innovation_nm > 3.0)
-            
-            # Thêm một biến trạng thái kiểm tra xem đã qua thời gian trễ chưa
-            # Để đơn giản: Nếu mới bị spoofing dưới 4 bước, hệ thống vẫn "tin" GNSS một chút
-            if is_currently_spoofed and k > 40:
-                steps_in_noise = k - 40 # Vùng kịch bản 2 bắt đầu từ bước 40
-            else:
-                steps_in_noise = 0
-                
-            if score < gru_threshold and steps_in_noise < 4:
-                # Giai đoạn trễ: Hệ thống bị ảnh hưởng nhẹ bởi GNSS giả mạo
-                x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
-                trusted_gnss[k] = True
-            elif alt_available_mask[k]:
-                # Hệ thống đã nhận diện, cô lập GNSS hoàn toàn và chuyển sang INS/DME dự phòng
-                alt_pos = np.array([
-                    t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
-                    t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
-                ])
-                x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
+        # --- LOGIC PHẢN ỨNG MỚI CÓ ĐỘ TRỄ ---
+        # Kiểm tra xem tín hiệu GNSS tại bước này có thực sự bị lệch lớn (spoofing) không
+        is_bad_signal = (score >= gru_threshold) or (innovation_nm > 3.0)
+
+        if is_bad_signal:
+            spoof_counter += 1
+        else:
+            spoof_counter = 0
+
+        # Nếu bị nhiễu nhưng chưa đủ số bước trễ -> Vẫn dùng GNSS (Tàu bay bị kéo lệch nhẹ)
+        if gnss_available_mask[k] and spoof_counter < delay_steps:
+            x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
+            trusted_gnss[k] = True
+        # Sau khi qua thời gian trễ -> Ngắt hẳn GNSS, chuyển sang nguồn dự phòng độc lập
+        elif alt_available_mask[k]:
+            alt_pos = np.array([
+                t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
+                t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
+            ])
+            x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
 
         r_lat[k], r_lon[k] = x[0], x[1]
         prev_innovation_nm = innovation_nm
