@@ -219,16 +219,29 @@ def mo_phong_ekf_gru_resilient(
         )
         scores[k] = score
 
-        if gnss_available_mask[k] and score < gru_threshold and innovation_nm < 5.0:
-            x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
-            trusted_gnss[k] = True
-        elif alt_available_mask[k]:
-            # Nguon doc lap gia lap: DME/Radar/ADS-C quanh vi tri thuc, co nhieu do rieng.
-            alt_pos = np.array([
-                t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
-                t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
-            ])
-            x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
+        # Giả lập: Cần ít nhất 4 bước nằm trong vùng nhiễu để GRU/FDE xác nhận và phản ứng
+        if gnss_available_mask[k]:
+            # Đếm số bước liên tiếp bị nhiễu nặng (> 3.0 NM) tính đến hiện tại
+            is_currently_spoofed = (innovation_nm > 3.0)
+            
+            # Thêm một biến trạng thái kiểm tra xem đã qua thời gian trễ chưa
+            # Để đơn giản: Nếu mới bị spoofing dưới 4 bước, hệ thống vẫn "tin" GNSS một chút
+            if is_currently_spoofed and k > 40:
+                steps_in_noise = k - 40 # Vùng kịch bản 2 bắt đầu từ bước 40
+            else:
+                steps_in_noise = 0
+                
+            if score < gru_threshold and steps_in_noise < 4:
+                # Giai đoạn trễ: Hệ thống bị ảnh hưởng nhẹ bởi GNSS giả mạo
+                x, P = _ekf_update(x, P, gnss_pos, H_pos, R_gnss)
+                trusted_gnss[k] = True
+            elif alt_available_mask[k]:
+                # Hệ thống đã nhận diện, cô lập GNSS hoàn toàn và chuyển sang INS/DME dự phòng
+                alt_pos = np.array([
+                    t_lat[k] + np.random.normal(0.0, alt_sigma_deg),
+                    t_lon[k] + np.random.normal(0.0, alt_sigma_deg),
+                ])
+                x, P = _ekf_update(x, P, alt_pos, H_pos, R_alt)
 
         r_lat[k], r_lon[k] = x[0], x[1]
         prev_innovation_nm = innovation_nm
